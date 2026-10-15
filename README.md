@@ -73,11 +73,11 @@ python scripts/test_photos.py
 
 ## GitHub · Railway
 
-기존 로컬 `.git`을 사용합니다. `.env`, `.local/`, `tmp/`, 가상환경은 Git 및 Docker 컨텍스트에서 제외합니다. 원격 푸시와 배포는 사용자 승인 후 진행합니다.
+기존 로컬 `.git`을 사용합니다. `.env`, `.local/`, `tmp/`, 가상환경은 Git 및 Docker 컨텍스트에서 제외합니다. 원격 푸시와 배포 승인은 받았으며, 계정 로그인 및 대상 저장소 지정 후 진행합니다.
 
 Railway는 `Dockerfile`과 `railway.toml`로 빌드합니다. `start.sh`가 `PORT`(로컬 기본 8501)에 맞춰 `0.0.0.0`으로 실행하며 `/_stcore/health`를 확인합니다.
 
-승인 후 진행할 단계:
+계정 연결 후 진행할 단계:
 
 1. 대상 GitHub 계정과 저장소를 선택하고 코드를 푸시합니다.
 2. Railway에서 해당 저장소를 연결합니다.
