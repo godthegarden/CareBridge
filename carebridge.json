@@ -1,0 +1,334 @@
+{
+  "kind": "studio.workflow-config-draft",
+  "schemaVersion": 4,
+  "exportedAt": "2026-10-14T07:06:44.865Z",
+  "exportedFrom": {
+    "workflowId": "agt_8GwyseGJ9WKZn5bNJEhv2B",
+    "workflowName": "CareBridge",
+    "configId": "cfg_9UapkbJANA52WCmR7p27cu",
+    "configVer": 4
+  },
+  "workflowConfig": {
+    "workflow_name": "CareBridge",
+    "pipelineType": "classify-extract",
+    "documentParseConfiguration": {
+      "modelName": "document-parse",
+      "mode": "enhanced",
+      "ocrMode": "force",
+      "lang": "",
+      "chartRecognition": true,
+      "coordinates": true,
+      "mergeMultipageTables": false,
+      "outputFormats": [
+        "html",
+        "text"
+      ],
+      "base64Encoding": [
+        "figure"
+      ]
+    },
+    "documentClassifyConfiguration": {
+      "schema": {
+        "type": "json_schema",
+        "json_schema": {
+          "name": "document-classify",
+          "schema": {
+            "type": "string",
+            "oneOf": [
+              {
+                "const": "health_checkup_result",
+                "description": "A medical examination result report summarizing general health screening findings in a structured table, typically listing test items, measured results, units, reference ranges, and remarks under a health checkup title."
+              },
+              {
+                "const": "medication_guidance_record",
+                "description": "A pharmacy medication guidance or dosage instruction record that lists prescribed medicines in a table with fields such as drug name, dose per intake, frequency per day, duration, timing of administration, and precautions, typically used to explain how and when to take each medication."
+              }
+            ]
+          }
+        }
+      },
+      "modelName": ""
+    },
+    "informationExtractConfiguration": {
+      "modelName": "",
+      "schemas": [
+        {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "health_checkup_result",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "document_title": {
+                  "type": "string",
+                  "description": "Extract the main document title that identifies the document type. Capture only the title text itself, excluding surrounding metadata such as examination date, recipient name, format indicators, footers, or notes. Preserve the original text and spacing as shown."
+                },
+                "health_examination_date": {
+                  "type": "string",
+                  "description": "Extract the examination date from the document metadata labeled as the examination date. Return the date in YYYY-MM-DD format; if the document already shows that format, preserve it exactly. Exclude the field label and any neighboring metadata separators or other metadata values."
+                },
+                "examinee_name": {
+                  "type": "string",
+                  "description": "Extract the examinee or recipient name from the document metadata. Capture only the person identifier or name value, excluding the field label, separators, and any adjacent metadata such as dates or document format."
+                },
+                "health_checkup_results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "test_item_name": {
+                        "type": "string",
+                        "description": "Extract the test item name from the row under the test-item column. Capture the full item label as shown, including abbreviations or parenthetical notation that is part of the item name. Exclude row numbering if present."
+                      },
+                      "result_value": {
+                        "type": "string",
+                        "description": "Extract the row's reported result from the result column. Capture only the displayed value for that row, excluding the column header, units, and remarks. Preserve the original text exactly as shown, including decimals or placeholder text if present."
+                      },
+                      "result_unit": {
+                        "type": "string",
+                        "description": "Extract the measurement unit from the unit column for the same row. Capture only the unit text, excluding the result value and column header. Preserve symbols, slashes, superscripts written inline, and letter case as shown."
+                      },
+                      "reference_range": {
+                        "type": "string",
+                        "description": "Extract the reference or normal range from the reference-range column for the same row. Capture only the displayed range text, excluding the column header and any unrelated notes. Preserve separators such as hyphens exactly as shown."
+                      },
+                      "remark": {
+                        "type": "string",
+                        "description": "Extract the row-specific remark or note from the remark column. Capture only the text in that row's remark cell, excluding the column header. Preserve the original wording exactly, including placeholder-like text if shown."
+                      },
+                      "source_excerpt": {
+                        "type": "string",
+                        "description": "Extract the original text section containing the test name, measurement value, unit, and reference range for the relevant test item. Does not include information from other test items and does not generate content not present in the original text."
+                      }
+                    }
+                  },
+                  "description": ""
+                }
+              }
+            }
+          },
+          "schemaLayout": {
+            "version": 1,
+            "columns": [
+              {
+                "name": "document_title",
+                "source": "root"
+              },
+              {
+                "name": "health_examination_date",
+                "source": "root"
+              },
+              {
+                "name": "examinee_name",
+                "source": "root"
+              },
+              {
+                "name": "test_item_name",
+                "source": "group_table",
+                "groupTableKey": "health_checkup_results"
+              },
+              {
+                "name": "result_value",
+                "source": "group_table",
+                "groupTableKey": "health_checkup_results"
+              },
+              {
+                "name": "result_unit",
+                "source": "group_table",
+                "groupTableKey": "health_checkup_results"
+              },
+              {
+                "name": "reference_range",
+                "source": "group_table",
+                "groupTableKey": "health_checkup_results"
+              },
+              {
+                "name": "remark",
+                "source": "group_table",
+                "groupTableKey": "health_checkup_results"
+              },
+              {
+                "name": "source_excerpt",
+                "source": "group_table",
+                "groupTableKey": "health_checkup_results"
+              }
+            ]
+          },
+          "mode": "standard",
+          "modelName": "",
+          "nodeMode": "extract",
+          "manyRows": true,
+          "manyRowsThreshold": 50,
+          "manyRowsMaxRowsPerBatch": 400,
+          "manyRowsMaxConcurrent": 5,
+          "userSystemPrompt": "이 에이전트는 건강검진 결과지와 복약안내문에서 정보를 정확하게 추출합니다.\n\n문서 유형에 따라 해당하는 추출 스키마를 사용하고, 각 검사항목 또는 약품에 대응하는 정보를 동일한 테이블 행에 연결합니다.\n\n표, 카드형, 서술형 등 문서의 다양한 구성 방식을 처리하며, 특정 문서의 레이아웃이나 열 위치에만 의존하지 않습니다.\n\n문서에 명시된 정보만 추출하고, 누락되거나 불명확한 값은 임의로 추측하지 않습니다. 검사 결과에 대한 새로운 의학적 판정이나 복약 지시를 생성하지 않습니다.\n\n복약안내문에서는 약품별 복용 정보와 주의사항을 혼동하지 않으며, 서로 모순되는 복약 정보가 있는 경우 임의로 하나를 선택하지 않습니다. 광고, 영수증 등 복약 지시와 관계없는 내용은 제외합니다.\n\n원문에 기재된 수치, 단위, 복약 지시의 의미를 변경하지 않고 최대한 정확하게 보존합니다."
+        },
+        {
+          "type": "json_schema",
+          "json_schema": {
+            "name": "medication_guidance_record",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "record_document_title": {
+                  "type": "string",
+                  "description": "Extract the main document title that identifies the record type. Use the prominent heading text only, excluding decorative markers or unrelated footer text. Preserve the original text as written."
+                },
+                "record_written_date": {
+                  "type": "string",
+                  "description": "Extract the record creation or 작성일 date from the document header or summary line. Return the date in YYYY-MM-DD format exactly as shown when already in that format; otherwise normalize to YYYY-MM-DD if the source provides enough information. Exclude the field label and surrounding separators."
+                },
+                "patient_name": {
+                  "type": "string",
+                  "description": "Extract the patient or recipient name from the header or summary area. Return only the name text, excluding labels, separators, and adjacent metadata such as dates or format notes. Preserve the original text exactly, including masking or anonymity wording if present."
+                },
+                "medication_instructions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "medication_name": {
+                        "type": "string",
+                        "description": "Extract the medicine name for the medication record. Return only the medicine name text, excluding dosage, scheduling, and caution text."
+                      },
+                      "single_dose": {
+                        "type": "string",
+                        "description": "Extract the amount taken each time for the medication record, such as tablet count, capsule count, or volume. Return the value exactly as written, excluding any column label."
+                      },
+                      "times_per_day": {
+                        "type": "string",
+                        "description": "Extract the number of administrations per day for the medication record. Return only the frequency value as written, excluding labels or added interpretation. If the dosage frequency is unclear or it conflicts with other medication instructions, do not decide arbitrarily."
+                      },
+                      "days_of_administration": {
+                        "type": "string",
+                        "description": "Extract the number of days for which the medication is to be taken when explicitly shown for that medication. Return only the displayed value, excluding labels. If not present in the medication record, leave blank."
+                      },
+                      "administration_timing": {
+                        "type": "string",
+                        "description": "Extract the intake timing or schedule for the medication record, such as meal relation or time-of-day instruction. Include only the scheduling text and exclude caution or warning statements when they are separable."
+                      },
+                      "caution_notes": {
+                        "type": "string",
+                        "description": "Extract the caution, warning, or special instruction associated with the medication record. Include only the caution text, excluding the medicine name, dose, and routine timing text when they are separable."
+                      },
+                      "source_excerpt": {
+                        "type": "string",
+                        "description": "Extract the original text corresponding to the drug name, dosage, number of doses, duration, timing, and precautions for the specified drug. Do not mix information from different substances, and do not create content not found in the original text."
+                      }
+                    }
+                  },
+                  "description": ""
+                }
+              }
+            }
+          },
+          "schemaLayout": {
+            "version": 1,
+            "columns": [
+              {
+                "name": "record_document_title",
+                "source": "root"
+              },
+              {
+                "name": "record_written_date",
+                "source": "root"
+              },
+              {
+                "name": "patient_name",
+                "source": "root"
+              },
+              {
+                "name": "medication_name",
+                "source": "group_table",
+                "groupTableKey": "medication_instructions"
+              },
+              {
+                "name": "single_dose",
+                "source": "group_table",
+                "groupTableKey": "medication_instructions"
+              },
+              {
+                "name": "times_per_day",
+                "source": "group_table",
+                "groupTableKey": "medication_instructions"
+              },
+              {
+                "name": "days_of_administration",
+                "source": "group_table",
+                "groupTableKey": "medication_instructions"
+              },
+              {
+                "name": "administration_timing",
+                "source": "group_table",
+                "groupTableKey": "medication_instructions"
+              },
+              {
+                "name": "caution_notes",
+                "source": "group_table",
+                "groupTableKey": "medication_instructions"
+              },
+              {
+                "name": "source_excerpt",
+                "source": "group_table",
+                "groupTableKey": "medication_instructions"
+              }
+            ]
+          },
+          "mode": "standard",
+          "modelName": "",
+          "nodeMode": "extract",
+          "manyRows": true,
+          "manyRowsThreshold": 50,
+          "manyRowsMaxRowsPerBatch": 400,
+          "manyRowsMaxConcurrent": 5,
+          "userSystemPrompt": "이 에이전트는 건강검진 결과지와 복약안내문에서 정보를 정확하게 추출합니다.\n\n문서 유형에 따라 해당하는 추출 스키마를 사용하고, 각 검사항목 또는 약품에 대응하는 정보를 동일한 테이블 행에 연결합니다.\n\n표, 카드형, 서술형 등 문서의 다양한 구성 방식을 처리하며, 특정 문서의 레이아웃이나 열 위치에만 의존하지 않습니다.\n\n문서에 명시된 정보만 추출하고, 누락되거나 불명확한 값은 임의로 추측하지 않습니다. 검사 결과에 대한 새로운 의학적 판정이나 복약 지시를 생성하지 않습니다.\n\n복약안내문에서는 약품별 복용 정보와 주의사항을 혼동하지 않으며, 서로 모순되는 복약 정보가 있는 경우 임의로 하나를 선택하지 않습니다. 광고, 영수증 등 복약 지시와 관계없는 내용은 제외합니다.\n\n원문에 기재된 수치, 단위, 복약 지시의 의미를 변경하지 않고 최대한 정확하게 보존합니다."
+        }
+      ],
+      "categorySchemaMapping": {
+        "health_checkup_result": "health_checkup_result",
+        "medication_guidance_record": "medication_guidance_record"
+      },
+      "confidenceThreshold": 0.9676
+    },
+    "pipelineEdges": [
+      {
+        "id": "e0",
+        "source": {
+          "nodeType": "parse"
+        },
+        "target": {
+          "nodeType": "classify",
+          "name": "Classify-1"
+        }
+      },
+      {
+        "id": "e1",
+        "source": {
+          "nodeType": "classify",
+          "name": "Classify-1"
+        },
+        "target": {
+          "nodeType": "extract",
+          "name": "health_checkup_result"
+        },
+        "condition": {
+          "conditionName": "health_checkup_result"
+        }
+      },
+      {
+        "id": "e2",
+        "source": {
+          "nodeType": "classify",
+          "name": "Classify-1"
+        },
+        "target": {
+          "nodeType": "extract",
+          "name": "medication_guidance_record"
+        },
+        "condition": {
+          "conditionName": "medication_guidance_record"
+        }
+      }
+    ]
+  }
+}
