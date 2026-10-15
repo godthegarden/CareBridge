@@ -30,6 +30,20 @@
 
 - PNG·JPG 실제 API: sample4의 1200px 렌더 이미지 각각 호출 완료. 두 형식 모두 복약문서로 분류, A·B·C 3개 약품의 용량·횟수·기간(모두 3일)·시점 원문 일치. 증거 `.local/live/photo-png.json`, `photo-jpeg.json`. 실제 휴대폰 촬영 사진 검증은 아님.
 - 브라우저: PDF 및 PNG 선택/업로드 확인. 사진 모듈 갱신 전 서버가 이전 코드를 사용해 PNG를 거절한 오류를 발견하여 서버 재시작. 최신 서버에서 PNG 업로드 → 전송 동의 → 실제 Agent 분석 완료 → A·B·C 결과 표시까지 확인.
-- Docker 이미지 빌드: 로컬 Docker daemon이 실행되지 않아 미검증. Railway 원격 배포, 공개 URL 접근: 배포 승인 수신, 계정 로그인 및 대상 저장소 지정 대기 중으로 미실행.
+- 로컬 Docker daemon은 미실행이었으나 Railway에서 실제 Docker 이미지 빌드 및 컨테이너 기동 검증을 완료했습니다. 원격 검증 결과는 아래 배포 항목에 기록했습니다.
 - 실제 환자 촬영 사진의 저조도·기울어짐·다중 페이지, 동시 사용자 부하: 미검증.
 - 일정표 CSV 제공, 백그라운드 푸시 알림은 미구현.
+
+## Railway 배포 검증 (2026-10-15)
+
+- GitHub: https://github.com/godthegarden/CareBridge (`main`, public)
+- Railway 서비스: CareBridge / production
+- 공개 URL: https://carebridge-production-7518.up.railway.app
+- Dockerfile 빌드 및 첫 컨테이너 실행 성공. 실제 실행 포트 `0.0.0.0:8080` 확인.
+- 공개 `/_stcore/health` 응답 `ok`, 대시보드 한국어 렌더링 확인.
+- 신규 서비스의 레거시 Config as Code 사용 제한으로 상태 검사 경로 `/_stcore/health`, 제한 120초, 실패 재시도 3회를 Settings에서 직접 설정.
+- 키와 Agent ID는 Railway Variables에만 저장. Git에는 `.env.example`만 포함.
+- 공개 저장소 URL 연결 방식이며 자동 배포는 비활성화. 이후 코드 변경은 수동 배포 필요.
+- 환경변수 적용 재배포 `145737e8` Active 확인. 공개 URL에서 sample3.pdf 직접 업로드 → 실제 Agent 분석 완료. 검사 7개와 미기재 3개 보존, 단순 문서 범위 비교 1개 범위 초과 확인.
+
+- 같은 공개 세션에서 sample4.png 업로드 → 실제 Agent 분석 완료. 복약문서 분류, A/B/C 용량·횟수·시점 정확, 3개 모두 3일 표시 확인. 공개 서버 PDF/PNG 분석 흐름을 모두 검증했습니다.

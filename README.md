@@ -1,5 +1,8 @@
 # CareBridge 🌿
 
+- 서비스: https://carebridge-production-7518.up.railway.app
+- 소스: https://github.com/godthegarden/CareBridge
+
 건강검진 결과지와 복약안내문을 실제 Upstage Studio Agent로 분석하는 한국어 Streamlit MVP입니다. PDF, PNG, JPG/JPEG를 지원합니다. `carebridge.json`의 기존 Parse → Classify → 유형별 Extract 구성과 스키마는 변경하지 않았습니다.
 
 ## 실행
@@ -73,11 +76,11 @@ python scripts/test_photos.py
 
 ## GitHub · Railway
 
-기존 로컬 `.git`을 사용합니다. `.env`, `.local/`, `tmp/`, 가상환경은 Git 및 Docker 컨텍스트에서 제외합니다. 원격 푸시와 배포 승인은 받았으며, 계정 로그인 및 대상 저장소 지정 후 진행합니다.
+기존 로컬 `.git`을 사용합니다. `.env`, `.local/`, `tmp/`, 가상환경은 Git 및 Docker 컨텍스트에서 제외합니다. 공개 GitHub 저장소의 `main` 브랜치로 푸시했고 Railway의 CareBridge 서비스에 배포했습니다.
 
-Railway는 `Dockerfile`과 `railway.toml`로 빌드합니다. `start.sh`가 `PORT`(로컬 기본 8501)에 맞춰 `0.0.0.0`으로 실행하며 `/_stcore/health`를 확인합니다.
+Railway는 `Dockerfile`을 자동 감지해 빌드합니다. 신규 서비스에서는 레거시 Config as Code를 사용할 수 없어 `railway.toml`은 참고용입니다. 실제 서비스 Settings에 Healthcheck Path `/_stcore/health`, Timeout `120`, On Failure 재시도 `3`을 직접 적용했습니다. `start.sh`가 `PORT`(로컬 기본 8501)에 맞춰 `0.0.0.0`으로 실행하며 `/_stcore/health`를 확인합니다.
 
-계정 연결 후 진행할 단계:
+새 환경에 재현할 단계:
 
 1. 대상 GitHub 계정과 저장소를 선택하고 코드를 푸시합니다.
 2. Railway에서 해당 저장소를 연결합니다.
@@ -85,7 +88,7 @@ Railway는 `Dockerfile`과 `railway.toml`로 빌드합니다. `start.sh`가 `POR
 4. 배포 후 도메인을 생성하고 공개 URL에서 문서 업로드→분석→결과를 다시 검증합니다.
 5. 최종 제출물: 공개 URL, GitHub URL, Agent JSON, 데모 영상, 발표 PDF. 영상/발표자료는 이번 구현에 포함하지 않았습니다.
 
-실제 외부 배포나 GitHub push는 아직 수행하지 않았습니다.
+실제 GitHub push 및 Railway 배포를 완료했습니다. 현재 공개 저장소 URL로 연결한 서비스는 **자동 배포가 꺼져 있습니다**. 코드 수정 후 Railway에서 최신 main 커밋으로 수동 배포하거나 별도로 GitHub App 연결을 구성하세요. API 키는 Variables에만 저장하며 저장소에는 포함하지 않습니다.
 
 ## 설계 참고
 

@@ -1,3 +1,4 @@
+# Legacy reference only: new Railway services must set these values in service Settings.
 [build]
 builder = "DOCKERFILE"
 [deploy]
