@@ -9,7 +9,7 @@ from carebridge.domain import analysis_record_data, normalize, GROUPS, medicatio
 from carebridge.documents import original_type
 from carebridge.records import record, export_records, import_records
 from carebridge.ui import summary_html, table_html, lines, badge
-from carebridge.health import assess, document_sex, summarize
+from carebridge.health import assess, document_sex, summarize, measurement_fields
 
 logger=logging.getLogger('carebridge.app')
 logger.setLevel(logging.INFO)
@@ -142,6 +142,7 @@ def health(r):
     rows=r['data']['health_checkup_results']
     sex=document_sex(r['data'])
     assessments=[assess(row,sex) for row in rows]
+    measurements=[measurement_fields(row) for row in rows]
     counts=summarize(assessments)
     normal,attention,unknown=counts['met'],counts['attention'],counts['unknown']
     st.markdown('### 문서 기준 요약')
@@ -154,14 +155,17 @@ def health(r):
     visible=[(i,row,assessment) for i,(row,assessment) in enumerate(zip(rows,assessments)) if not only_attention or assessment.level!='normal']
     if visible:
         st.markdown(table_html(['검사항목','측정값','단위','문서 참고범위','확인 상태'],[
-            [lines(row['test_item_name'] or '항목명 확인 필요'),lines(row['result_value'] or '미기재'),
-             lines(row['result_unit'] or '미기재'),lines(assessment.reference),badge(assessment.text,tone=assessment.tone)]
-            for _,row,assessment in visible],'건강검진 결과'),unsafe_allow_html=True)
+            [lines(measurements[i].name or '항목명 확인 필요'),lines(row['result_value'] or '미기재'),
+             lines(measurements[i].unit or '미기재'),lines(assessment.reference),badge(assessment.text,tone=assessment.tone)]
+            for i,row,assessment in visible],'건강검진 결과'),unsafe_allow_html=True)
     else:
         st.info('확인이 필요한 항목이 없습니다. 전체 항목은 필터를 해제해 확인하세요.')
     with st.expander('항목 상세 · 비고 및 원문 근거'):
         i=draft_input(st.selectbox,'상세 확인할 검사항목',r['id']+'health_detail',0,options=list(range(len(rows))),format_func=lambda n:f"{n+1}. {rows[n]['test_item_name'] or '항목명 미기재'}")
         st.text('표시 근거: '+assessments[i].reason)
+        st.text('표시 단위: '+(measurements[i].unit or '미기재')+' · '+measurements[i].unit_source)
+        st.text('원문 항목명: '+(rows[i]['test_item_name'] or '미기재'))
+        st.text('원문 단위 필드: '+(rows[i]['result_unit'] or '미기재'))
         st.text('원문 참고범위: '+(rows[i]['reference_range'] or '미기재'))
         st.text('원문 비고: '+(rows[i]['remark'] or '미기재'))
         st.text('원문 근거: '+(rows[i]['source_excerpt'] or '미기재'))

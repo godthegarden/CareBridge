@@ -369,10 +369,10 @@ def test_health_verdict_colors_summary_and_original_preservation():
     assert 'status-badge muted">확인 필요' in table
     assert '남성: 13.0~16.5 / 여성: 12.0~15.5' in table
     assert '남성: 90 이상 / 여성: 85 이상' in table
-    assert table.count('class="status-badge">문서 범위 내')==2
+    assert table.count('class="status-badge">문서 범위 내')==1
     app.checkbox[0].check().run()
     table=next(m.value for m in app.markdown if '<table aria-label="건강검진 결과"' in m.value)
-    assert 'BMI' in table and '추가 항목' in table and '허리둘레' not in table and '혈색소' not in table
+    assert 'BMI' in table and '추가 항목' in table and '허리둘레' in table and '혈색소' not in table
     next(s for s in app.selectbox if s.label=='상세 확인할 검사항목').set_value(1).run()
     assert any(t.value=='원문 참고범위: 남 13-16.5 여 12-15.5' for t in app.text)
     assert app.session_state['records'][0]['data']==before
@@ -399,10 +399,10 @@ def test_required_health_cases_reach_table_and_match_summary(sex):
     assert any(m.value=='### 문서 기준 요약' for m in app.markdown)
     summary=next(m.value for m in app.markdown if 'class="result-summary"' in m.value)
     values=[part.split('</strong>')[0] for part in summary.split('<strong>')[1:]]
-    assert values==(['6개','2개','4개','0개'] if sex else ['6개','0개','4개','2개'])
+    assert values==(['6개','1개','4개','1개'] if sex else ['6개','0개','4개','2개'])
     table=next(m.value for m in app.markdown if '<table aria-label="건강검진 결과"' in m.value)
     rows=table.split('<tbody>')[1].split('</tbody>')[0].split('</tr>')[:-1]
-    expected=['과체중','문서 기준 초과','문서 기준 초과','문서 기준 미달']+(['문서 범위 내']*2 if sex else ['확인 필요']*2)
+    expected=['과체중','문서 기준 초과','문서 기준 초과','문서 기준 미달']+(['문서 임계값 해당 · 의미 확인 필요','문서 범위 내'] if sex else ['확인 필요']*2)
     assert len(rows)==6
     for html,(name,_,_),status in zip(rows,examples,expected):
         assert name in html and '>'+status+'</span>' in html
@@ -412,7 +412,7 @@ def test_required_health_cases_reach_table_and_match_summary(sex):
     assert len(app.subheader)==1
     app.checkbox[0].check().run()
     filtered=next(m.value for m in app.markdown if '<table aria-label="건강검진 결과"' in m.value)
-    assert filtered.count('<tr>')==(5 if sex else 7)
+    assert filtered.count('<tr>')==(6 if sex else 7)
     assert app.session_state['records'][0]['data']==original
 
 
@@ -457,3 +457,36 @@ def test_medication_details_compare_extraction_with_approved_values():
     assert frequency['사용자 승인 일정값']=='1'
     assert app.session_state['records'][0]['data']==data
     assert not app.json
+
+
+@__import__('pytest').mark.parametrize('sex',['남성',None])
+def test_units_in_item_names_and_risk_direction_reach_health_view(sex):
+    from pathlib import Path
+    from copy import deepcopy
+    from carebridge.domain import normalize
+    from carebridge.records import record
+    raw={'health_checkup_results':[
+        {'test_item_name':'BMI(kg/m²)','result_value':'26.8','reference_range':'과체중(25-29.9)'},
+        {'test_item_name':'공복혈당(mg/dL)','result_value':'108mg/dL','reference_range':'100mg/dL미만'},
+        {'test_item_name':'혈색소(g/dL)','result_value':'15.1','reference_range':'남 13-16.5 여 12-15.5'},
+        {'test_item_name':'허리둘레(cm)','result_value':'91cm','reference_range':'남 90cm이상, 여 85cm이상','source_excerpt':'복부비만 기준: 남성 90cm 이상, 여성 85cm 이상'}]}
+    if sex: raw['examinee_sex']=sex
+    kind,data=normalize(raw)
+    original=deepcopy(data)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.session_state['records']=[record(kind,data,'saved-synthetic-extraction.json','test',kind)]
+    app.sidebar.radio[0].set_value('건강검진').run()
+    assert not app.exception
+    table=next(m.value for m in app.markdown if '<table aria-label="건강검진 결과"' in m.value)
+    for unit in ('kg/m²','mg/dL','g/dL','cm'):
+        assert f'data-label="단위">{unit}</td>' in table
+    assert 'BMI(kg/m²)' not in table
+    assert '공복혈당(mg/dL)' not in table
+    waist=next(html for html in table.split('</tr>') if 'data-label="검사항목">허리둘레</td>' in html)
+    assert '문서 범위 내' not in waist
+    assert ('status-badge attention">원문 위험 기준 해당' if sex else 'status-badge muted">확인 필요') in waist
+    summary=next(m.value for m in app.markdown if 'class="result-summary"' in m.value)
+    counts=[part.split('</strong>')[0] for part in summary.split('<strong>')[1:]]
+    assert counts==(['4개','1개','3개','0개'] if sex else ['4개','0개','2개','2개'])
+    assert any(text.value=='원문 항목명: BMI(kg/m²)' for text in app.text)
+    assert app.session_state['records'][0]['data']==original

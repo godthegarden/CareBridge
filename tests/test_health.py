@@ -46,7 +46,7 @@ def test_sex_threshold_format_and_direction_are_preserved():
     raw='남 90 이상, 여 85 이상'
     value=row('92',raw,'cm')
     assert format_reference(value)=='남성: 90 이상 / 여성: 85 이상'
-    assert assess(value,'male').level=='normal'
+    assert assess(value,'male').level=='unknown'
     # Explicit adverse categories take precedence over an unlabelled reference condition.
     value['reference_range']='남 이상: 90 이상 / 여 이상: 85 이상'
     assert assess(value,'male').level=='abnormal'
@@ -128,8 +128,8 @@ def test_labeled_thresholds_have_document_defined_meaning(value,level):
 
 def test_sex_changes_only_the_applicable_condition_not_its_meaning():
     value=row('89','남 90 이상, 여 85 이상')
-    assert assess(value,'male').text=='문서 기준 미달'
-    assert assess(value,'female').text=='문서 범위 내'
+    assert assess(value,'male').text=='문서 임계값 미해당 · 의미 확인 필요'
+    assert assess(value,'female').text=='문서 임계값 해당 · 의미 확인 필요'
     assert assess(value).level=='unknown'
     assert assess(row('14 g/dL','13~16.5 (g/dL)','g/dL')).level=='normal'
 
@@ -139,8 +139,8 @@ def test_sex_changes_only_the_applicable_condition_not_its_meaning():
     ('108','100미만',None,'문서 기준 초과'),
     ('216','200미만',None,'문서 기준 초과'),
     ('42','60이상',None,'문서 기준 미달'),
-    ('91','남 90 이상, 여 85 이상','male','문서 범위 내'),
-    ('91','남 90 이상, 여 85 이상','female','문서 범위 내'),
+    ('91','남 90 이상, 여 85 이상','male','문서 임계값 해당 · 의미 확인 필요'),
+    ('91','남 90 이상, 여 85 이상','female','문서 임계값 해당 · 의미 확인 필요'),
     ('91','남 90 이상, 여 85 이상',None,'확인 필요'),
     ('15.1','남 13-16.5 여 12-15.5','male','문서 범위 내'),
     ('15.1','남 13-16.5 여 12-15.5','female','문서 범위 내'),
@@ -185,3 +185,70 @@ def test_summary_and_color_do_not_turn_numeric_comparison_into_diagnosis():
     assert [result.tone for result in results]==['caution','caution','normal','unknown','abnormal']
     assert results[0].basis=='comparison'
     assert results[-1].basis=='document_verdict'
+
+
+@pytest.mark.parametrize('name,unit,label',[
+    ('BMI(kg/m²)','kg/m²','BMI'),('BMI (kg/m2)','kg/m²','BMI'),
+    ('공복혈당(mg/dL)','mg/dL','공복혈당'),('혈색소(g/dL)','g/dL','혈색소'),
+    ('혈색소(Hb) [g/dL]','g/dL','혈색소(Hb)'),('허리둘레(cm)','cm','허리둘레'),
+    ('AST(SGOT)(U/L)','U/L','AST(SGOT)'),('검사(설명)','','검사(설명)'),
+    ('BMI','','BMI'),('검사(mg/dL)(g/dL)','','검사(mg/dL)(g/dL)'),
+])
+def test_only_explicit_units_are_split_from_item_name(name,unit,label):
+    from carebridge.health import measurement_fields
+    value=row();value['test_item_name']=name
+    original=deepcopy(value)
+    fields=measurement_fields(value)
+    assert fields.name==label and fields.unit==unit
+    assert value==original
+
+
+def test_existing_unit_has_priority_and_derived_unit_is_used_for_comparison():
+    from carebridge.health import measurement_fields
+    value=row('108mg/dL','100mg/dL미만','',remark='')
+    value['test_item_name']='공복혈당(mg/dL)'
+    assert assess(value).text=='문서 기준 초과'
+    value['result_unit']='미기재'
+    assert measurement_fields(value).unit=='mg/dL'
+    value['result_unit']='mmol/L'
+    assert measurement_fields(value).unit=='mmol/L'
+    assert '(mg/dL)' in measurement_fields(value).name  # Conflicting source units stay visible.
+    assert assess(value).level=='unknown'  # Never convert units silently.
+
+
+@pytest.mark.parametrize('sex,value,expected',[
+    ('male','91cm','원문 위험 기준 해당'),('male','90cm','원문 위험 기준 해당'),
+    ('female','85cm','원문 위험 기준 해당'),('female','84cm','원문 위험 기준 미해당 · 정상 여부 확인 필요'),
+    (None,'91cm','확인 필요'),
+])
+def test_abdominal_risk_threshold_is_not_an_allowable_normal_range(sex,value,expected):
+    data=row(value,'남 90cm이상, 여 85cm이상')
+    data['test_item_name']='허리둘레(cm)'
+    data['source_excerpt']='허리둘레 복부비만 기준: 남 90cm 이상, 여 85cm 이상'
+    original=deepcopy(data)
+    result=assess(data,sex)
+    assert result.text==expected and result.level!='normal'
+    assert result.tone==('caution' if expected=='원문 위험 기준 해당' else 'unknown')
+    assert data==original
+
+
+@pytest.mark.parametrize('value,reference',[
+    ('19','위험 기준: 20미만'),('20','위험 기준: 20이하'),
+    ('20','주의 기준: 20이상'),('21','주의 기준: 20초과'),
+])
+def test_risk_direction_comes_from_document_marker_and_operator(value,reference):
+    result=assess(row(value,reference))
+    assert result.text=='원문 위험 기준 해당' and result.tone=='caution'
+
+
+def test_meaning_missing_conflicting_or_explicitly_normal():
+    value=row('91','남 90 이상, 여 85 이상')
+    assert assess(value,'male').level=='unknown'
+    value['source_excerpt']='정상 기준: 남 90 이상, 여 85 이상'
+    assert assess(value,'male').level=='normal'
+    value['source_excerpt']+='; 위험 기준 여부 확인 필요'
+    assert assess(value,'male').level=='unknown'
+    value['reference_range']='복부비만 기준: 남 90 이상, 여 85 이상'
+    value['source_excerpt']='복부비만 기준'
+    assert assess(value,'male').text=='원문 위험 기준 해당'
+    assert assess(value).level=='unknown'

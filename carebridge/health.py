@@ -24,6 +24,53 @@ class Assessment:
 
 
 @dataclass(frozen=True)
+class Measurement:
+    name: str
+    unit: str
+    unit_source: str
+
+
+# Recognize only explicitly written unit tokens, never infer a unit from the test type.
+UNITS={unit:unit for unit in ('cm','mm','m','kg','g','mg','mmHg','%','mg/dL','g/dL','mg/L','g/L','U/L','IU/L','mIU/L','mL/min','mmol/L')}
+UNITS.update({'kg/m2':'kg/m²','kg/m^2':'kg/m²','mL/min/1.73m2':'mL/min/1.73m²'})
+
+
+def measurement_fields(row):
+    name=str(row.get('test_item_name') or '').strip()
+    explicit=str(row.get('result_unit') or '').strip()
+    if re.fullmatch(r'미기재|미상|불명|없음|확인\s*필요|[-—]|n/?a|null|none',explicit,re.I): explicit=''
+    candidates=[]
+    for match in re.finditer(r'\(([^()]*)\)|\[([^\[\]]*)\]',name):
+        token=unicodedata.normalize('NFKC',match[1] if match[1] is not None else match[2])
+        token=re.sub(r'\s+','',token)
+        if token in UNITS: candidates.append((match.start(),match.end(),UNITS[token]))
+    units={unit for _,_,unit in candidates}
+    derived=next(iter(units)) if len(units)==1 else ''
+    unit=explicit or derived
+    explicit_key=re.sub(r'\s+','',unicodedata.normalize('NFKC',explicit))
+    if derived and (not explicit or UNITS.get(explicit_key,explicit)==derived):
+        for start,end,_ in reversed(candidates): name=name[:start]+name[end:]
+        name=re.sub(r'\s+',' ',name).strip()
+    return Measurement(name,unit,'단위 필드' if explicit else '항목명' if derived else '확인 필요')
+
+
+RISK_MARKER=r'(?:복부\s*비만|비만|위험|주의|이상|경계)\s*(?:판정\s*)?기준'
+NORMAL_MARKER=r'정상\s*(?:기준|범위)'
+REFERENCE_HEADING=re.compile(r'^(?P<label>(?:'+RISK_MARKER+'|'+NORMAL_MARKER+r'))\s*[:：]?\s*')
+
+
+def threshold_meaning(row):
+    context=' '.join(str(row.get(field) or '') for field in ('test_item_name','reference_range','remark','source_excerpt'))
+    risk=bool(re.search(RISK_MARKER,context))
+    normal=bool(re.search(NORMAL_MARKER,context))
+    return 'risk' if risk and not normal else 'normal' if normal and not risk else None
+
+
+def reference_condition(text):
+    return REFERENCE_HEADING.sub('',text)
+
+
+@dataclass(frozen=True)
 class Rule:
     low: Decimal | None
     high: Decimal | None
@@ -49,7 +96,7 @@ def cleaned(text,unit=''):
     unit=unicodedata.normalize('NFKC',str(unit or '')).strip()
     if unit:
         unit_pattern=r'(?:\('+re.escape(unit)+r'\)|'+re.escape(unit)+r')'
-        text=re.sub(r'(?<=\d)\s*'+unit_pattern+r'(?=$|\s|[-~〜–—,;/)\]])','',text)
+        text=re.sub(r'(?<=\d)\s*'+unit_pattern+r'(?=$|\s|[-~〜–—,;/)\]]|이상|이하|초과|미만)','',text)
     return text.strip()
 
 
@@ -132,8 +179,10 @@ def categories(text):
 
 def format_reference(row):
     raw=row.get('reference_range') or ''
-    unit=row.get('result_unit') or ''
+    unit=measurement_fields(row).unit
     text=cleaned(raw,unit)
+    heading=REFERENCE_HEADING.match(text)
+    text=reference_condition(text)
     def format_part(part):
         rule=numeric_rule(part)
         if rule: return rule.display()
@@ -147,24 +196,25 @@ def format_reference(row):
     else:
         formatted=format_part(text)
     # Unit conversions are deliberately not performed; differing units remain unreadable.
-    return formatted or '미기재'
+    return ((heading['label']+' · ') if heading else '')+(formatted or '미기재')
 
 
 def assess(row,sex=None):
     reference=format_reference(row)
     def result(level,text,reason,basis='comparison'): return Assessment(level,text,reason,reference,basis)
-    explicit=explicit_verdict(row.get('remark'))
+    remark=row.get('remark') or ''
+    explicit=None if re.fullmatch(RISK_MARKER,remark.strip()) else explicit_verdict(remark)
     if explicit is None:
         explicit=explicit_verdict(row.get('result_value'))
     if explicit:
         level,label=explicit
         return result(level,'원문 판정 · '+label if level!='unknown' else '확인 필요','문서의 항목별 판정을 우선 표시했습니다. 원문 비고를 대조하세요.',basis='document_verdict')
-    unit=row.get('result_unit') or ''
+    unit=measurement_fields(row).unit
     value=cleaned(row.get('result_value'),unit)
     if not re.fullmatch(NUMBER,value):
         return result('unknown','확인 필요','측정값을 단일 숫자로 확인할 수 없습니다.')
     value=Decimal(value)
-    ref=cleaned(row.get('reference_range'),unit)
+    ref=reference_condition(cleaned(row.get('reference_range'),unit))
     parts=sex_parts(ref)
     if parts is not None:
         if not parts or len({key for key,_ in parts})!=len(parts):
@@ -186,7 +236,15 @@ def assess(row,sex=None):
     if not rule:
         return result('unknown','확인 필요','문서 기준을 해석할 수 없거나 값과 기준의 단위가 일치하지 않습니다.')
     if rule.low is None or rule.high is None:
-        if rule.matches(value):
+        meaning=threshold_meaning(row)
+        applies=rule.matches(value)
+        if meaning=='risk':
+            return result('caution' if applies else 'unknown','원문 위험 기준 해당' if applies else '원문 위험 기준 미해당 · 정상 여부 확인 필요',
+                          '문서가 위험 기준으로 명시한 조건의 해당 여부입니다. 위험 조건 미해당을 정상 판정으로 바꾸지 않습니다.',basis='risk_condition')
+        if parts is not None and meaning!='normal':
+            return result('unknown','문서 임계값 '+('해당' if applies else '미해당')+' · 의미 확인 필요',
+                          '해당 성별의 숫자 조건은 비교했지만 정상 기준인지 위험 기준인지 확정할 수 없습니다.')
+        if applies:
             return result('normal','문서 범위 내','문서 참고기준의 단일 임계값을 충족합니다. 의학적 정상 여부를 판단한 결과가 아닙니다.')
         below=rule.low is not None
         return result('abnormal','문서 기준 미달' if below else '문서 기준 초과','문서에 적힌 임계값을 충족하지 않습니다. 질병 진단이 아닙니다.')
