@@ -11,6 +11,8 @@ from carebridge.records import record, export_records, import_records
 from carebridge.ui import summary_html, table_html, lines, badge
 from carebridge.health import assess, document_sex, summarize, measurement_fields
 from carebridge.explanation_ui import easy_explanation, comprehension
+from carebridge.medication_validation import field_errors, variable_schedule
+from carebridge.stage_review import stage_review
 
 logger=logging.getLogger('carebridge.app')
 logger.setLevel(logging.INFO)
@@ -49,7 +51,7 @@ h1,h2,h3{letter-spacing:-.035em}h1{font-weight:750!important;font-size:2rem!impo
 .result-table td{display:block;padding:2px 0;border:0;font-size:.83rem}.result-table td:first-child{grid-column:1/-1;font-size:.95rem}.result-table td:first-child:before{display:none}.result-table table[aria-label="복약안내문 약품 목록"] td{padding:2px 0}
 .result-table td:before{display:block;content:attr(data-label);font-size:.75rem;font-weight:400;color:#647b76}.result-table td .status-badge{justify-self:start}}
 </style>''',unsafe_allow_html=True)
-for key,default in [('records',[]),('schedules',{}),('originals',{}),('page','대시보드'),('schedule_drafts',{}),('selected_records',{})]:
+for key,default in [('records',[]),('schedules',{}),('originals',{}),('page','대시보드'),('schedule_drafts',{}),('selected_records',{}),('stage_reviews',{})]:
     if key not in st.session_state: st.session_state[key]=default
 
 with st.sidebar:
@@ -143,6 +145,15 @@ def source_material(r):
     with st.expander('원본 자료 대조하기'):
         if st.checkbox('개인정보가 포함될 수 있는 원본 자료를 확인합니다.',key=r['id']+'show_original'):
             evidence(r)
+            review=st.session_state.stage_reviews.get(r['id'])
+            if review:
+                st.caption('먼저 원본과 Parse 텍스트를 대조하고, Parse가 정확한 경우에만 Extract 필드·규칙을 점검하세요. 완료 상태만으로 추출 정확도나 오류 원인을 판단하지 않습니다.')
+                st.dataframe(review['steps'],hide_index=True,width='stretch')
+                with st.expander('Parse 중간 텍스트 대조 (현재 세션만)'):
+                    st.text(review['parse_text'] or '대조할 Parse 텍스트가 없습니다. 오류 단계는 단정할 수 없습니다.')
+                    st.caption('최대 30,000자. 로그·기록 내보내기에 포함하지 않습니다.')
+            else:
+                st.caption('이 기록에는 Parse 중간 결과가 없습니다. 원문과 중간 결과 없이 오류 단계를 단정할 수 없습니다.')
 
 
 def health(r,report=False):
@@ -186,15 +197,18 @@ def health(r,report=False):
 def meds(r):
     rows=r['data']['medication_instructions']
     issues_by_row=[medication_issues(row) for row in rows]
+    checks_by_row=[field_errors(row) for row in rows]
+    def medication_value(row,field,checks):
+        return lines(row[field] or '미기재')+('<br>'+badge('확인 필요',tone='unknown') if field in checks else '')
     st.markdown('### 01. 약품별 복약정보')
     st.markdown(summary_html([('인식한 약품',f'{len(rows)}개'),('확인 필요 정보',f'{sum(map(len,issues_by_row))}건')]),unsafe_allow_html=True)
     st.caption('횟수와 일수는 원문 표기입니다. 횟수가 하루 기준인지 확인한 뒤 일정에 등록하세요.')
     st.markdown(table_html(['약품명 / 확인 상태','1회량','원문 횟수','투약 일수','복용 시점','원문 주의사항'],[
         [lines(row['medication_name'] or '약품명 확인 필요')+'<br>'+badge(f'확인 필요 {len(issues)}건',True),
-         lines(row['single_dose'] or '미기재'),lines(row['times_per_day'] or '미기재'),
-         lines(row['days_of_administration'] or '미기재'),lines('확인 필요' if missing(row['administration_timing']) else row['administration_timing']),
+         medication_value(row,'single_dose',checks),medication_value(row,'times_per_day',checks),
+         medication_value(row,'days_of_administration',checks),medication_value(row,'administration_timing',checks),
          lines(row['caution_notes'] or '추출 내용 없음')]
-        for row,issues in zip(rows,issues_by_row)],'복약안내문 약품 목록'),unsafe_allow_html=True)
+        for row,issues,checks in zip(rows,issues_by_row,checks_by_row)],'복약안내문 약품 목록'),unsafe_allow_html=True)
     st.divider()
     st.markdown('### 02. 복약 일정 관리')
     st.caption('확인한 정보만 약품별로 등록합니다. 입력값을 수정하면 다시 승인해야 합니다.')
@@ -214,9 +228,13 @@ def meds(r):
             start=draft_input(st.date_input,'복용 시작일',key+'start',date.today(),confirmation_key=key+'confirmed')
             clocks=draft_input(st.text_input,'알림 시각 (HH:MM, 쉼표로 구분)',key+'clocks','',confirmation_key=key+'confirmed',placeholder='직접 확인한 시각을 입력하세요')
             confirmed=draft_input(st.checkbox,'원본 또는 전문가를 통해 약품명·용량·하루 기준 횟수·기간·시점·시작일·알림 시각을 모두 확인하고 일정 저장을 승인합니다.',key+'confirmed',False)
-            if st.button('확인한 내용으로 일정 저장',key=key+'save',type='primary'):
+            blocking=field_errors(verified,schedule=True)
+            if variable_schedule(row):
+                blocking['administration_timing']='필요시·비일일·상충 지시는 고정 일일 일정으로 등록할 수 없습니다.'
+            if blocking: st.warning(' / '.join(blocking.values()))
+            if st.button('확인한 내용으로 일정 저장',key=key+'save',type='primary',disabled=bool(blocking)):
                 try:
-                    events=make_schedule(verified,start,[c.strip() for c in clocks.split(',') if c.strip()],confirmed)
+                    events=make_schedule(verified,start,[c.strip() for c in clocks.split(',') if c.strip()],confirmed,original=row)
                     st.session_state.schedules[key]={'record_id':r['id'],'confirmed_values':verified,'events':events}
                     st.rerun()
                 except ValueError as e: st.error(str(e))
@@ -324,6 +342,7 @@ elif page=='문서 분석':
                 kind,result,classification=analysis_record_data(job)
                 r=record(kind,result,filename,job.get('id',''),classification)
                 st.session_state.records.append(r);st.session_state.originals[r['id']]=data
+                st.session_state.stage_reviews[r['id']]=stage_review(job)
                 logger.info('analysis stage=result_processing state=completed elapsed_s=%d',int(time.monotonic()-started))
                 status.update(label='분석 완료 · 기록에 추가했습니다',state='complete',expanded=False)
                 if client.cleanup_warning: st.warning('Upstage 업로드 파일 삭제를 확인하지 못했습니다. Console에서 확인해 주세요.')
@@ -374,6 +393,7 @@ else:
             if st.button('기록 삭제',key='delete'+r['id']):
                 st.session_state.records=[x for x in st.session_state.records if x['id']!=r['id']]
                 st.session_state.originals.pop(r['id'],None)
+                st.session_state.stage_reviews.pop(r['id'],None)
                 for name in ('factchat_results','factchat_panels'):
                     st.session_state.get(name,{}).pop(r['id'],None)
                 for name in ('factchat_answers',):

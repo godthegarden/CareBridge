@@ -23,6 +23,7 @@ def offline(monkeypatch):
     monkeypatch.setenv('FACTCHAT_API_KEY', 'test-only-secret-never-log')
     monkeypatch.setenv('FACTCHAT_MODEL', 'solar-mini4')
     monkeypatch.setenv('FACTCHAT_MAX_REQUESTS', '1')
+    monkeypatch.setenv('FACTCHAT_RESPONSE_FORMAT', 'json_schema')
     monkeypatch.setattr(fc, '_requests', 0)
     monkeypatch.setattr(fc, '_last_request', None)
     monkeypatch.setattr(fc, 'load_dotenv', lambda *a, **kw: None)
@@ -942,3 +943,120 @@ def test_safe_report_does_not_depend_on_an_exact_generated_disclaimer():
     with pytest.raises(fc.ExplanationError) as error:
         fc.validate_plan(generated,payload)
     assert error.value.validation_rule=='document_medical_claim'
+
+
+@pytest.mark.parametrize('data',[HEALTH,MEDS])
+def test_official_strict_output_contract_and_local_validation(data):
+    from carebridge.output_contract import response_format
+    payload=fc.build_facts(data)
+    contract=response_format(payload)
+    assert contract['type']=='json_schema' and contract['json_schema']['strict'] is True
+    def check(node):
+        if isinstance(node,dict):
+            if node.get('type')=='object':
+                assert node['additionalProperties'] is False
+                assert set(node['required'])==set(node['properties'])
+            for value in node.values(): check(value)
+        elif isinstance(node,list):
+            for value in node: check(value)
+    check(contract)
+    session=Mock()
+    session.post.return_value=response(payload)
+    result=fc.request_plan(payload,consent=True,session=session)
+    assert session.post.call_args.kwargs['json']['response_format']==contract
+    assert result['source']=='factchat_generated' and session.post.call_count==1
+
+
+def test_prompt_only_is_explicit_and_still_validates(monkeypatch):
+    monkeypatch.setenv('FACTCHAT_RESPONSE_FORMAT','prompt_json')
+    payload=fc.build_facts(HEALTH)
+    generated=plan(payload)
+    generated['summary'][0]['text']='당신은 당뇨병이 확실합니다.'
+    session=Mock()
+    session.post.return_value=response(payload,choices=[{'finish_reason':'stop','message':{'content':json.dumps(generated)}}])
+    with pytest.raises(fc.ExplanationError) as error: fc.request_plan(payload,consent=True,session=session)
+    assert error.value.validation_rule=='document_medical_claim'
+    assert 'response_format' not in session.post.call_args.kwargs['json']
+    assert session.post.call_count==1
+
+
+def test_rejected_format_has_no_automatic_fallback_or_second_request():
+    session=Mock()
+    session.post.return_value=Mock(status_code=400)
+    with pytest.raises(fc.ExplanationError): fc.request_plan(fc.build_facts(HEALTH),consent=True,session=session)
+    assert session.post.call_count==1
+
+
+def test_invalid_format_configuration_does_not_spend_request(monkeypatch):
+    monkeypatch.setenv('FACTCHAT_RESPONSE_FORMAT','invalid')
+    session=Mock()
+    with pytest.raises(fc.ExplanationError): fc.request_plan(fc.build_facts(HEALTH),consent=True,session=session)
+    assert fc._requests==0 and not session.post.called
+
+
+def test_uncertain_medication_fields_not_eligible_for_quiz_or_silent_correction():
+    data=deepcopy(MEDS)
+    data['medication_instructions'][0].update(single_dose='1~2정',times_per_day='2~3회',days_of_administration='미상',administration_timing='필요시')
+    original=deepcopy(data)
+    payload=fc.build_facts(data)
+    for fact in payload['facts']:
+        if fact['field'] in ('dose','frequency','days','timing'): assert not fact['quiz_allowed']
+    assert any(f['field']=='check' and '확인 필요' in f['value'] for f in payload['facts'])
+    assert data==original
+    generated=plan(payload)
+    assert fc.validate_plan(generated,payload)
+    generated['details'][0]['text']+=' 9정으로 변경하세요.'
+    with pytest.raises(fc.ExplanationError): fc.validate_plan(generated,payload)
+
+
+@pytest.mark.parametrize('kind',['health_checkup_result','medication_guidance_record'])
+def test_mock_agent_to_ai_ui_and_uncertain_schedule_gate(monkeypatch,kind):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from carebridge import client
+    data=deepcopy(HEALTH if kind=='health_checkup_result' else MEDS)
+    if kind=='medication_guidance_record':
+        data['medication_instructions'][0].update(single_dose='1~2정',times_per_day='2~3회',days_of_administration='미상',administration_timing='필요시')
+    payload=fc.build_facts(data)
+    generated=plan(payload)
+    transport=Mock()
+    transport.post.return_value=response(payload)
+    monkeypatch.setattr(fc.requests,'Session',lambda:transport)
+    class FakeAgent:
+        cleanup_warning=False
+        def analyze(self,content,progress):
+            return {'id':'mock-demo','status':'completed','output':[
+                {'step_type':'document-parse','status':'completed','content':[{'type':'output_text','text':'가상 중간 텍스트: 원문과 대조 필요'}]},
+                {'step_type':'document-classify','status':'completed','content':[{'type':'output_text','text':kind}]},
+                {'step_type':'information-extract','status':'completed','content':[{'type':'output_text','text':json.dumps(data)}]}]}
+    monkeypatch.setattr(client,'AgentClient',FakeAgent)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.sidebar.radio[0].set_value('문서 분석').run()
+    next(r for r in app.radio if r.label=='문서 선택 방식').set_value('가상 샘플 체험').run()
+    app.checkbox[0].check().run()
+    next(b for b in app.button if b.label=='AI 분석 시작').click().run()
+    assert not app.exception and transport.post.call_count==0
+    saved=app.session_state['records'][0]
+    assert saved['classification']==kind
+    assert app.session_state['stage_reviews'][saved['id']]['parse_text']=='가상 중간 텍스트: 원문과 대조 필요'
+    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
+    next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
+    assert not app.exception
+    assert transport.post.call_count==1
+    assert any(generated['summary'][0]['text'] in m.value for m in app.markdown)
+    if kind=='health_checkup_result':
+        questions=[r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))]
+        bank={q['id']:q for q in payload['understanding_questions']}
+        questions[0].set_value(bank[generated['quiz'][0]['question_id']]['answer']).run()
+        assert any(c.value=='정답입니다.' for c in app.caption)
+    else:
+        app.toggle[0].set_value(True).run()
+        assert next(b for b in app.button if b.label=='확인한 내용으로 일정 저장').disabled
+        next(c for c in app.checkbox if '일정 저장을 승인' in c.label).check().run()
+        assert next(b for b in app.button if b.label=='확인한 내용으로 일정 저장').disabled
+        assert not app.session_state['schedules']
+        assert any('확인 필요' in w.value for w in app.warning)
+    next(c for c in app.checkbox if '개인정보가 포함될 수 있는 원본 자료' in c.label).check().run()
+    assert any('가상 중간 텍스트' in t.value for t in app.text)
+    assert transport.post.call_count==1 and app.session_state['records'][0]['data']==saved['data']

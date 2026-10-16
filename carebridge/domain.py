@@ -3,6 +3,7 @@ import json
 import re
 from datetime import datetime, timedelta
 from .client import AnalysisError, ROOT
+from .medication_validation import field_errors, variable_schedule
 
 SCHEMAS = {s['json_schema']['name']:s['json_schema']['schema'] for s in json.loads((ROOT/'carebridge.json').read_text())['workflowConfig']['informationExtractConfiguration']['schemas']}
 GROUPS = {'health_checkup_result':'health_checkup_results','medication_guidance_record':'medication_instructions'}
@@ -112,12 +113,20 @@ def medication_issues(row):
     else: issues.append('횟수가 하루 기준인지 확인 필요')
     if not positive_int(row.get('days_of_administration',''),r'(?:일)?'): issues.append('복용 일수 확인 필요')
     combined=' '.join(row.values())
-    if re.search(r'OCR|불확실|불명확|판독|인식 오류|\?',combined,re.I): issues.append('추출 정확도 확인 필요')
+    checks=field_errors(row)
+    if any(re.search(r'OCR|불확실|불명확|판독|인식 오류|\?',value,re.I) for field,value in row.items() if field not in checks):
+        issues.append('추출 정확도 확인 필요')
     if re.search('필요시|필요 시|상충|모순|충돌|전문가에게 확인',combined): issues.append('복약 지시 확인 필요')
+    for issue in checks.values():
+        if issue not in issues: issues.append(issue)
     return issues
 
-def make_schedule(row, start, clocks, confirmed):
+def make_schedule(row, start, clocks, confirmed, *, original=None):
     if not confirmed: raise ValueError('원문 또는 전문가에게 확인한 내용을 승인해 주세요.')
+    errors=field_errors(row,schedule=True)
+    if original is not None and variable_schedule(original):
+        errors['administration_timing']='필요시·비일일·상충 지시는 고정 일일 일정으로 등록할 수 없습니다.'
+    if errors: raise ValueError(' / '.join(errors.values()))
     count=positive_int(row.get('times_per_day',''),r'(?:회)?')
     days=positive_int(row.get('days_of_administration',''),r'(?:일)?')
     if not count or not days or count>12 or days>366 or missing(row.get('administration_timing','')) or missing(row.get('single_dose','')) or missing(row.get('medication_name','')):

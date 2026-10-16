@@ -139,8 +139,8 @@ def test_medication_dashboard_is_compact_and_requires_opt_in():
     assert frequency.value==''
     app.text_input[-1].set_value('09:00').run()
     app.checkbox[0].check().run()
-    next(b for b in app.button if b.label=='확인한 내용으로 일정 저장').click().run()
-    assert app.error and not app.session_state['schedules']
+    assert next(b for b in app.button if b.label=='확인한 내용으로 일정 저장').disabled
+    assert app.warning and not app.session_state['schedules']
     next(s for s in app.selectbox if s.label=='일정을 만들 약품').set_value(1).run()
     assert not app.exception
     assert next(t for t in app.text_input if t.label=='확인한 약품명').value=='두 번째 약'

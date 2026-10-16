@@ -15,6 +15,8 @@ from .domain import normalize, missing
 from .health import assess, document_sex, measurement_fields
 from .explanation_content import SYSTEM, HEALTH_SYSTEM, LABELS, term_definition, validate_content
 from .health_report import question_bank
+from .output_contract import response_format
+from .medication_validation import field_errors
 
 BASE = 'https://api.baze.co/v1/gateway'
 logger = logging.getLogger(__name__)
@@ -77,6 +79,7 @@ def build_facts(data):
                       ('reference', row['reference_range']), ('remark', row['remark'])]
             attention = assessment.level != 'normal'
         else:
+            medication_errors=field_errors(row)
             fields = [('dose', row['single_dose']), ('frequency', row['times_per_day']),
                       ('days', row['days_of_administration']), ('timing', row['administration_timing']),
                       ('caution', row['caution_notes'])]
@@ -87,6 +90,9 @@ def build_facts(data):
             if not value or (missing(value) and not negative_measurement):
                 continue
             uncertain = bool(re.search(r'OCR|불확실|불명확|판독|인식 오류|\?', value, re.I))
+            if not health:
+                original_field={'dose':'single_dose','frequency':'times_per_day','days':'days_of_administration','timing':'administration_timing','caution':'caution_notes'}[field]
+                uncertain = uncertain or original_field in medication_errors
             facts.append({'id': f'{i}:{field}', 'item': name, 'field': field, 'value': value,
                           'attention': attention, 'quiz_allowed': not uncertain and field != 'unit' and '[이름 제외]' not in value,
                           'origin': 'document'})
@@ -103,6 +109,7 @@ def build_facts(data):
                 checks.append('원문 횟수의 기준 확인 필요')
             if any(re.search(r'OCR|불확실|불명확|판독|인식 오류|\?', value, re.I) for _, value in fields):
                 checks.append('추출 정확도 확인 필요')
+            checks.extend(issue for issue in medication_errors.values() if issue not in checks)
             if checks:
                 facts.append({'id': f'{i}:check', 'item': name, 'field': 'check', 'value': ' / '.join(checks),
                               'attention': True, 'quiz_allowed': False, 'origin': 'rule'})
@@ -164,15 +171,22 @@ def request_plan(payload, *, consent=False, session=None):
     if consent is not True:
         raise ExplanationError('외부 전송 동의가 필요합니다.')
     key, model = configuration()
+    try:
+        output_format = response_format(payload)
+    except ValueError as error:
+        raise ExplanationError(str(error)) from None
     _reserve()
     started = time.monotonic()
     transport = session or requests.Session()
     try:
+        body={'model':model,'messages':[{'role':'system','content':HEALTH_SYSTEM if payload.get('report_version') else SYSTEM},
+                                      {'role':'user','content':json.dumps(payload,ensure_ascii=False)}],
+              'stream':False,'max_tokens':4500}
+        if output_format is not None:
+            body['response_format']=output_format
         response = transport.post(BASE + '/chat/completions/',
             headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
-            json={'model': model, 'messages': [{'role': 'system', 'content': HEALTH_SYSTEM if payload.get('report_version') else SYSTEM},
-                  {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}],
-                  'stream': False, 'max_tokens': 4500}, timeout=(5, 35), allow_redirects=False)
+            json=body, timeout=(5, 35), allow_redirects=False)
         logger.info('factchat state=response http=%d elapsed_s=%.1f', response.status_code, time.monotonic()-started)
         if response.status_code != 200:
             errors = {401: 'Gateway 인증 설정을 확인해 주세요.', 402: 'Gateway 크레딧이 부족합니다.',

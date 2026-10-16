@@ -51,7 +51,7 @@ def test_medication_issues_preserve_frequency_meaning_and_cautions():
     assert '복용 시점 확인 필요' in medication_issues(row)
     assert not any('주의사항' in issue for issue in medication_issues(row))
     row['medication_name']='OCR 판독 불확실'
-    assert '추출 정확도 확인 필요' in medication_issues(row)
+    assert '약품명 확인 필요' in medication_issues(row)
 
 
 def classification_step(value, status='completed'):
