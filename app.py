@@ -130,6 +130,7 @@ def analysis_view(r):
         return
     view_record={**r,'data':clean}
     easy_entry=easy_explanation(view_record)
+    st.caption('기본 문서 안내 · 원문 추출값과 문서 기준을 이용한 규칙 기반 표시')
     (meds if classification=='medication_guidance_record' else health)(view_record)
     comprehension(view_record,easy_entry)
     if classification=='health_checkup_result':
