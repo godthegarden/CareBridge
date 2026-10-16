@@ -10,6 +10,7 @@ from carebridge.documents import original_type
 from carebridge.records import record, export_records, import_records
 from carebridge.ui import summary_html, table_html, lines, badge
 from carebridge.health import assess, document_sex, summarize, measurement_fields
+from carebridge.explanation_ui import easy_explanation, comprehension
 
 logger=logging.getLogger('carebridge.app')
 logger.setLevel(logging.INFO)
@@ -128,7 +129,9 @@ def analysis_view(r):
         st.warning('Classify 분류와 Extract 항목이 일치하지 않습니다. 문서 유형 확인이 필요합니다.')
         return
     view_record={**r,'data':clean}
+    easy_entry=easy_explanation(view_record)
     (meds if classification=='medication_guidance_record' else health)(view_record)
+    comprehension(view_record,easy_entry)
     if classification=='health_checkup_result':
         st.button('건강기록 보관 및 내보내기 →',on_click=navigate,args=('기록 포트폴리오',),key=r['id']+'manage_records')
 
@@ -364,6 +367,12 @@ else:
             if st.button('기록 삭제',key='delete'+r['id']):
                 st.session_state.records=[x for x in st.session_state.records if x['id']!=r['id']]
                 st.session_state.originals.pop(r['id'],None)
+                for name in ('factchat_results','factchat_panels'):
+                    st.session_state.get(name,{}).pop(r['id'],None)
+                for name in ('factchat_answers',):
+                    values=st.session_state.get(name,{})
+                    for key in list(values):
+                        if key.startswith(r['id']): values.pop(key,None)
                 for draft_key in list(st.session_state.schedule_drafts):
                     if draft_key.startswith(r['id']):
                         st.session_state.schedule_drafts.pop(draft_key,None)
