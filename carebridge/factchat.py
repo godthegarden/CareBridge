@@ -26,6 +26,9 @@ _last_request = None
 
 class ExplanationError(Exception):
     """Only fixed, non-sensitive messages may reach users/logs."""
+    validation_rule = 'request_error'
+    validation_section = 'request'
+    validation_index = -1
 
 
 def configuration():
@@ -141,6 +144,21 @@ def _reserve():
         _last_request = now
 
 
+def parse_generated_content(content):
+    """Decode the API envelope's content; document safety is checked separately."""
+    if isinstance(content, str):
+        fenced = re.fullmatch(r'\s*```(?:json)?\s*(\{[\s\S]*\})\s*```\s*', content)
+        if fenced:
+            content = fenced[1]
+    try:
+        return json.loads(content)
+    except (ValueError, TypeError):
+        error = ExplanationError('Gateway 응답 JSON 형식을 확인할 수 없습니다. 기존 분석 결과를 확인해 주세요. [response_json]')
+        error.validation_rule = 'response_json'
+        error.validation_section = 'response'
+        raise error from None
+
+
 def request_plan(payload, *, consent=False, session=None):
     if consent is not True:
         raise ExplanationError('외부 전송 동의가 필요합니다.')
@@ -171,15 +189,13 @@ def request_plan(payload, *, consent=False, session=None):
         choice = raw['choices'][0]
         if choice.get('finish_reason') != 'stop':
             raise ExplanationError('생성이 정상 완료되지 않아 설명을 표시하지 않습니다. 자동으로 다시 호출하지 않습니다.')
-        content = choice['message']['content']
-        if isinstance(content, str):
-            fenced = re.fullmatch(r'\s*```(?:json)?\s*(\{[\s\S]*\})\s*```\s*', content)
-            if fenced: content = fenced[1]
-        plan = validate_plan(json.loads(content), payload)
+        parsed = parse_generated_content(choice['message']['content'])
+        plan = validate_plan(parsed, payload)
         logger.info('factchat state=content_validated')
         return {'plan': plan, 'usage': metrics, 'model': model, 'source': 'factchat_generated'}
-    except ExplanationError:
-        logger.warning('factchat state=rejected')
+    except ExplanationError as error:
+        logger.warning('factchat state=rejected rule=%s section=%s item=%d',
+                       error.validation_rule, error.validation_section, error.validation_index)
         raise
     except requests.Timeout:
         logger.warning('factchat state=timeout')

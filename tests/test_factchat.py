@@ -611,3 +611,110 @@ def test_health_report_screen_order_collapsed_details_and_immediate_feedback(mon
     assert any(c.value=='정답입니다.' for c in app.caption)
     assert any(q['explanation'] in m.value for m in app.markdown)
     assert fake.call_count==1
+
+
+@pytest.mark.parametrize('notice', __import__('carebridge.health_report', fromlist=['REPORT_NOTICES']).REPORT_NOTICES)
+def test_reviewed_non_diagnostic_notice_does_not_trigger_medical_keyword_false_positive(notice):
+    # Validator-only regression: no transport, HTTP mock, or API call involved.
+    payload = fc.build_facts(HEALTH)
+    generated = plan(payload)
+    generated['summary'][-1]['text'] = notice
+    assert fc.validate_plan(generated, payload) is generated
+    generated['details'][0]['text'] += ' '+notice
+    assert fc.validate_plan(generated, payload) is generated
+
+
+@pytest.mark.parametrize('claim', [
+    '당뇨병으로 진단합니다.', '약물 변경을 권장합니다.', '치료가 필요합니다.',
+    '혈압약 복용을 중단하세요.', '검사 결과는 정상입니다.',
+])
+def test_reviewed_notice_never_shields_an_extra_generated_medical_claim(claim):
+    from carebridge.health_report import REPORT_NOTICES
+    payload = fc.build_facts(HEALTH)
+    generated = plan(payload)
+    generated['details'][0]['text'] += ' '+REPORT_NOTICES[1]+' '+claim
+    with pytest.raises(fc.ExplanationError) as raised:
+        fc.validate_plan(generated, payload)
+    assert raised.value.validation_rule == 'document_medical_claim'
+    assert raised.value.validation_section == 'details'
+    assert raised.value.validation_index == 0
+
+
+@pytest.mark.parametrize('text', [
+    '이 결과로 특정 질병을 진단할 수 있습니다.',
+    '이 결과만으로 특정 질병을 진단할 수 없습니다. 하지만 당뇨병입니다.',
+    '진단이라는 단어는 모두 허용합니다.',
+])
+def test_unreviewed_or_positive_diagnosis_text_is_still_rejected(text):
+    payload = fc.build_facts(HEALTH)
+    generated = plan(payload)
+    generated['summary'][0]['text'] = text
+    with pytest.raises(fc.ExplanationError) as raised:
+        fc.validate_plan(generated, payload)
+    assert raised.value.validation_rule == 'document_medical_claim'
+
+
+def test_lifestyle_and_document_prose_are_validated_as_separate_authorities():
+    from carebridge.health_report import LIFESTYLE
+    payload = fc.build_facts(HEALTH)
+    generated = plan(payload)
+    generated['lifestyle'] = ['food','activity','sleep']
+    assert fc.validate_plan(generated, payload)
+    # Even approved general-health text may not masquerade as document-derived prose.
+    for text in [LIFESTYLE['food']['text'], '걷기 시간을 늘리고 수면 시간을 정해 드립니다.']:
+        bad = deepcopy(generated)
+        bad['summary'][0]['text'] = text
+        with pytest.raises(fc.ExplanationError) as raised:
+            fc.validate_plan(bad, payload)
+        assert raised.value.validation_rule == 'document_lifestyle_prose'
+        assert raised.value.validation_section == 'summary'
+    for value in [[{'id':'food','text':'약물을 바꾸세요.'},'activity'], ['food','generated_plan']]:
+        bad = deepcopy(generated)
+        bad['lifestyle'] = value
+        with pytest.raises(fc.ExplanationError) as raised:
+            fc.validate_plan(bad, payload)
+        assert raised.value.validation_rule == 'lifestyle_template_only'
+        assert raised.value.validation_section == 'lifestyle'
+
+
+def test_api_json_decoding_is_separate_from_medical_validation():
+    payload = fc.build_facts(HEALTH)
+    unsafe = plan(payload)
+    unsafe['summary'][0]['text'] = '당뇨병으로 진단합니다.'
+    parsed = fc.parse_generated_content('```json\n'+json.dumps(unsafe,ensure_ascii=False)+'\n```')
+    assert parsed == unsafe  # API/JSON success is not content validation success.
+    with pytest.raises(fc.ExplanationError) as raised:
+        fc.validate_plan(parsed,payload)
+    assert raised.value.validation_rule == 'document_medical_claim'
+    with pytest.raises(fc.ExplanationError) as invalid_json:
+        fc.parse_generated_content('not json: PRIVATE_CONTENT')
+    assert invalid_json.value.validation_rule == 'response_json'
+    assert 'PRIVATE_CONTENT' not in str(invalid_json.value)
+
+
+def test_gateway_rejection_logs_only_rule_location_not_claim_or_identity(caplog):
+    payload = fc.build_facts(HEALTH)
+    unsafe = plan(payload)
+    unsafe['summary'][0]['text'] = '당뇨병으로 진단합니다. PRIVATE_PATIENT RAW_RESPONSE_SECRET'
+    transport = Mock()
+    transport.post.return_value = response(payload, choices=[{'finish_reason':'stop','message':{'content':json.dumps(unsafe,ensure_ascii=False)}}])
+    with pytest.raises(fc.ExplanationError):
+        fc.request_plan(payload,consent=True,session=transport)
+    assert 'http=200' in caplog.text
+    assert 'state=rejected rule=document_medical_claim section=summary item=0' in caplog.text
+    assert 'state=content_validated' not in caplog.text
+    for private in ['당뇨병','PRIVATE_PATIENT','RAW_RESPONSE_SECRET','26.8','test-only-secret']:
+        assert private not in caplog.text
+    assert transport.post.call_count == 1
+
+
+def test_gateway_accepts_reviewed_notice_and_template_ids_without_retry(caplog):
+    from carebridge.health_report import REPORT_NOTICES
+    payload = fc.build_facts(HEALTH)
+    generated = plan(payload)
+    generated['summary'][-1]['text'] = REPORT_NOTICES[1]
+    transport = Mock()
+    transport.post.return_value = response(payload,choices=[{'finish_reason':'stop','message':{'content':json.dumps(generated,ensure_ascii=False)}}])
+    assert fc.request_plan(payload,consent=True,session=transport)['plan']==generated
+    assert 'state=content_validated' in caplog.text
+    assert transport.post.call_count == 1

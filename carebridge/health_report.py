@@ -10,6 +10,21 @@ LIFESTYLE = {
 
 LIMIT = '검진 결과와 문서 기준의 비교만으로 특정 질병이나 개인별 치료 방법을 확정할 수는 없습니다.'
 
+# Only these complete, pre-reviewed non-diagnostic notices are allowed in prose.
+# This is not a keyword exception and never includes lifestyle prescriptions.
+REPORT_NOTICES = (
+    LIMIT,
+    '이 결과만으로 특정 질병을 진단할 수 없습니다.',
+    '이 수치만으로 특정 질병을 진단할 수는 없습니다.',
+    '검진 결과만으로 질병을 진단하거나 치료 방법을 정할 수는 없습니다.',
+)
+
+
+def strip_reviewed_notices(text):
+    import re
+    sentences = re.split(r'(?<=[.!?])\s+|\n+', text.strip())
+    return ' '.join(sentence for sentence in sentences if sentence.strip() not in REPORT_NOTICES)
+
 
 def question_bank(facts):
     rows = {}
@@ -61,18 +76,18 @@ def validate_report_selection(plan, payload, fail):
     lifestyle = plan['lifestyle']
     if (not isinstance(lifestyle, list) or not 2 <= len(lifestyle) <= 3 or
             any(not isinstance(key, str) or key not in LIFESTYLE for key in lifestyle) or len(set(lifestyle)) != len(lifestyle)):
-        fail('생활습관 정보는 검증된 일반 건강정보 2~3개만 선택할 수 있습니다.')
+        fail('생활습관 정보는 검증된 일반 건강정보 2~3개만 선택할 수 있습니다.', 'lifestyle_template_only')
     bank = {q['id']: q for q in payload['understanding_questions']}
     quiz = plan['quiz']
     if not isinstance(quiz, list) or (len(bank) >= 2 and len(quiz) not in (2, 3)) or (len(bank) < 2 and quiz):
-        fail('명확한 이해도 문제 근거 또는 문항 수가 올바르지 않습니다.')
+        fail('명확한 이해도 문제 근거 또는 문항 수가 올바르지 않습니다.', 'quiz_count')
     selected = []
     for item in quiz:
         if not isinstance(item, dict) or set(item) != {'question_id'} or not isinstance(item['question_id'], str) or item['question_id'] not in bank:
-            fail('수치 암기 질문이나 검증되지 않은 문제는 표시할 수 없습니다.')
+            fail('수치 암기 질문이나 검증되지 않은 문제는 표시할 수 없습니다.', 'quiz_candidate')
         selected.append(item['question_id'])
     if len(set(selected)) != len(selected):
-        fail('이해도 질문이 중복되어 있습니다.')
+        fail('이해도 질문이 중복되어 있습니다.', 'quiz_duplicate')
     if quiz and (not any(bank[key]['theme']=='relationship' for key in selected) or
                  not any(bank[key]['theme'] in ('meaning', 'limits') for key in selected)):
-        fail('이해도 질문은 기준과의 관계 및 의미·판단의 한계를 함께 다뤄야 합니다.')
+        fail('이해도 질문은 기준과의 관계 및 의미·판단의 한계를 함께 다뤄야 합니다.', 'quiz_topic')

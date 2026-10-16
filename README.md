@@ -142,3 +142,9 @@ BMI·공복혈당·콜레스테롤의 일상적 정의는 [CDC BMI](https://www.
 생활습관 가이드는 LLM이 `food/activity/sleep` 중 2~3개를 선택하고 앱이 검증된 고정 문구를 표시합니다. 검진표 원문이나 개인별 치료 권고가 아닌 일반 건강정보임을 표시합니다. 출처: [WHO 식습관](https://www.who.int/news-room/fact-sheets/detail/healthy-diet), [WHO 신체활동](https://www.who.int/news-room/fact-sheets/detail/physical-activity), [CDC 수면](https://www.cdc.gov/sleep/about/). 질병별 처방이나 운동량·식단 수치 목표를 생성하지 않습니다.
 
 건강검진 이해도 확인은 명확한 문서 비교·검증된 용어 정의·판단의 한계로부터 만든 제한된 문제 후보 중 2~3개를 선택합니다. 숫자를 암기하는 문제는 거절하고, 선택 즉시 정답과 고정된 근거 해설을 표시합니다. 정보가 부족하면 문제를 생략합니다. 기존 복약 설명·확인 문제·승인 후 일정 등록 흐름은 유지합니다. 새 리포트 구조는 캐시 키에 반영하며 화면 조작으로 자동 재호출하지 않습니다.
+
+### 설명 검증 실패 식별
+
+HTTP 200은 응답 수신 성공이며 내용 검증 성공과 구분합니다. 문서 설명의 의료 키워드 검사와 `lifestyle`의 사전 작성 템플릿 ID 검사는 별도입니다. 검토한 비진단 제한 안내는 **완전한 문장 일치**로만 허용하고, 그 앞뒤의 추가 의료 주장에는 동일한 차단 규칙을 적용합니다. 생활습관 문구를 문서 설명에 섞거나 LLM이 자유 문구를 반환하면 허용하지 않습니다.
+
+API JSON 해석은 `parse_generated_content`, 안전성 검증은 `validate_plan`으로 분리했습니다. 관리자 로그는 `rule=document_medical_claim section=summary item=0`처럼 고정된 규칙 ID·섹션·항목 순번만 추가로 기록합니다. `document_lifestyle_prose`는 문서 설명에 섞인 생활습관 문구, `lifestyle_template_only`는 승인되지 않은 템플릿 선택, `response_json`은 JSON 형식 오류입니다. 응답 원문·일치한 금지 단어·의료 수치·개인정보·API 키는 기록하지 않습니다. 실패 후 자동 재호출하지 않는 기존 정책은 유지합니다.
