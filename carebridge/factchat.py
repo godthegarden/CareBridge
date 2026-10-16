@@ -59,9 +59,19 @@ def _sanitize(value, names):
     return text if len(text) <= 240 else ''
 
 
-def build_facts(data):
+def build_facts(data, *, safe_only=False):
     """Keep schema untouched; no name/date/title/file/raw excerpt leaves the app."""
     kind, clean = normalize(data)
+    if safe_only:
+        if kind!='health_checkup_result':
+            raise ExplanationError('자동 해설은 검증된 건강검진 항목만 전송합니다.')
+        from .structured_explanation import structured_document
+        limited=structured_document(clean)
+        if not limited['health_checkup_results']:
+            raise ExplanationError('자동 전송할 수 있는 검증된 검사 항목이 없습니다. 기본 문서 요약을 확인하세요.')
+        payload=build_facts(limited)
+        payload['privacy_mode']='structured_only'
+        return payload
     names = [clean.get('examinee_name', ''), clean.get('patient_name', '')]
     facts = []
     health = kind == 'health_checkup_result'
@@ -235,9 +245,9 @@ def request_plan(payload, *, consent=False, session=None):
             transport.close()
 
 
-def generate_once(cache, record_id, data, *, consent=False):
+def generate_once(cache, record_id, data, *, consent=False, safe_only=False):
     """Session-local cache stores failures too; never share health content globally."""
-    payload = build_facts(data)
+    payload = build_facts(data,safe_only=safe_only)
     _, model = configuration()
     cache_key = fingerprint(payload, model)
     # Lock also prevents double-click races. No network call while holding a global lock.

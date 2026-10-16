@@ -84,7 +84,7 @@ def test_health_summary_separates_uncomparable_and_outside():
     assert '항목 A' in table and '항목 B' in table and '항목 C' in table
     assert '문서 범위 초과' in table and '확인 필요' in table
     assert not app.metric and not app.warning
-    assert any('확인 필요 1개' in m.value for m in app.markdown)
+    assert any('확인 필요</span><strong>1개' in m.value for m in app.markdown)
     app.checkbox[0].check().run()
     table=next(m.value for m in app.markdown if '<table aria-label="건강검진 결과"' in m.value)
     assert '항목 A' in table and '항목 C' in table and '항목 B' not in table
@@ -220,7 +220,7 @@ def test_analysis_submission_preserves_actual_classify(monkeypatch,classified,ti
     app.sidebar.radio[0].set_value('문서 분석').run()
     next(r for r in app.radio if r.label=='문서 선택 방식').set_value('가상 샘플 체험').run()
     app.checkbox[0].check().run()
-    next(b for b in app.button if b.label=='AI 분석 시작').click().run()
+    next(b for b in app.button if b.label=='AI 분석 및 해설 보기').click().run()
     assert not app.exception
     saved=app.session_state['records'][0]
     assert saved['classification']==('medication_guidance_record' if classified=='medication_guidance_record' else None)
@@ -278,7 +278,7 @@ def test_real_client_completed_poll_reaches_result_even_when_cleanup_times_out(m
     app.sidebar.radio[0].set_value('문서 분석').run()
     next(r for r in app.radio if r.label=='문서 선택 방식').set_value('가상 샘플 체험').run()
     app.checkbox[0].check().run()
-    next(b for b in app.button if b.label=='AI 분석 시작').click().run()
+    next(b for b in app.button if b.label=='AI 분석 및 해설 보기').click().run()
     assert not app.exception and not app.error
     assert len(app.session_state['records'])==1
     assert app.session_state['last_result_id']==app.session_state['records'][0]['id']
@@ -307,7 +307,7 @@ def test_analysis_errors_end_status_without_resubmission(monkeypatch,error):
     app.sidebar.radio[0].set_value('문서 분석').run()
     next(r for r in app.radio if r.label=='문서 선택 방식').set_value('가상 샘플 체험').run()
     app.checkbox[0].check().run()
-    next(b for b in app.button if b.label=='AI 분석 시작').click().run()
+    next(b for b in app.button if b.label=='AI 분석 및 해설 보기').click().run()
     assert not app.exception and app.error
     assert not app.session_state['records']
     assert any('오류' in element.label for element in app.get('status'))

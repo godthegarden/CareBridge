@@ -21,7 +21,7 @@ def easy_explanation(record, *, compact=False, render=True):
         st.caption('쉬운 설명 기능이 아직 준비되지 않았습니다. 아래 분석 결과는 그대로 이용할 수 있습니다.')
         return None
     try:
-        payload = build_facts(record['data'])
+        payload = build_facts(record['data'],safe_only=record.get('explanation_mode')=='structured_only')
         signature = fingerprint(payload, model)
     except ExplanationError as exc:
         st.button('쉬운 설명 보기', key=rid+'easy_open', disabled=True)
@@ -49,7 +49,7 @@ def easy_explanation(record, *, compact=False, render=True):
                                   key=rid+signature+'easy_consent')
             if st.button('동의한 정보로 설명 생성', key=rid+'easy_generate', disabled=not consent):
                 with st.spinner('문서 근거를 정리하고 있습니다…'):
-                    entry = generate_once(cache, rid, record['data'], consent=consent)
+                    entry = generate_once(cache, rid, record['data'], consent=consent,safe_only=record.get('explanation_mode')=='structured_only')
     if not entry:
         return None
     if entry['state'] == 'error' and payload.get('report_version'):

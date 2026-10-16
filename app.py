@@ -14,6 +14,7 @@ from carebridge.explanation_ui import easy_explanation, comprehension, general_h
 from carebridge.medication_validation import field_errors, variable_schedule
 from carebridge.stage_review import stage_review
 from carebridge.checkup_reading import document_opinions
+from carebridge.analysis_flow import BUSY, set_upload, queue, run_queued
 
 logger=logging.getLogger('carebridge.app')
 logger.setLevel(logging.INFO)
@@ -52,19 +53,35 @@ h1,h2,h3{letter-spacing:-.035em}h1{font-weight:750!important;font-size:2rem!impo
 .result-table td{display:block;padding:2px 0;border:0;font-size:.83rem}.result-table td:first-child{grid-column:1/-1;font-size:.95rem}.result-table td:first-child:before{display:none}.result-table table[aria-label="복약안내문 약품 목록"] td{padding:2px 0}
 .result-table td:before{display:block;content:attr(data-label);font-size:.75rem;font-weight:400;color:#647b76}.result-table td .status-badge{justify-self:start}}
 </style>''',unsafe_allow_html=True)
-for key,default in [('records',[]),('schedules',{}),('originals',{}),('page','대시보드'),('schedule_drafts',{}),('selected_records',{}),('stage_reviews',{})]:
+for key,default in [('records',[]),('schedules',{}),('originals',{}),('schedule_drafts',{}),('selected_records',{}),('stage_reviews',{})]:
     if key not in st.session_state: st.session_state[key]=default
+
+ROUTES={'home':'대시보드','analysis':'문서 분석','health':'건강검진','medication':'복약 관리','records':'기록 포트폴리오'}
+if 'active_page' not in st.session_state:
+    st.session_state.active_page=ROUTES.get(st.query_params.get('view'),'대시보드')
+if 'session_recovery' not in st.session_state:
+    st.session_state.session_recovery=st.query_params.get('analysis')=='started'
+if 'page' not in st.session_state: st.session_state.page=st.session_state.active_page
+
+def remember_route():
+    st.session_state.active_page=st.session_state.page
+    st.query_params['view']=next(k for k,v in ROUTES.items() if v==st.session_state.page)
+
+def navigate(destination):
+    st.session_state.page=destination
+    remember_route()
 
 with st.sidebar:
     st.title('🌿 CareBridge')
     st.caption('흩어진 문서를, 나를 위한 기록으로')
-    page=st.radio('내 건강 공간',['대시보드','문서 분석','건강검진','복약 관리','기록 포트폴리오'],key='page')
+    page=st.radio('내 건강 공간',list(ROUTES.values()),key='page',on_change=remember_route,
+                  disabled=st.session_state.get('analysis_flow',{}).get('state') in BUSY)
     st.divider()
     st.caption('문서에 담긴 정보를 쉽게 확인하는 서비스입니다. 의료적 진단이나 처방 변경을 제공하지 않습니다.')
     st.caption('기록은 현재 세션에 보관됩니다. 종료 전 포트폴리오에서 내려받으세요.')
+if st.session_state.session_recovery and not st.session_state.records:
+    st.warning('현재 세션에는 이전 분석 기록이 없습니다. 새 연결이나 서버 재시작으로 메모리 세션이 사라진 경우 문서를 다시 선택해 분석해 주세요. 기록을 자동 복구하거나 기존 작업을 재요청하지 않습니다.')
 
-def navigate(destination):
-    st.session_state.page=destination
 
 def draft_input(widget, label, key, value, confirmation_key=None, **kwargs):
     # Keep values outside widget state: Streamlit removes hidden widgets on navigation.
@@ -145,11 +162,14 @@ def analysis_view(r):
             if easy_entry:
                 health_report(easy_entry)
             else:
-                counts=summarize([assess(row,document_sex(clean)) for row in clean['health_checkup_results']])
-                st.markdown('### AI 핵심 요약')
+                st.markdown('### 기본 문서 요약')
                 st.caption('기본 문서 요약 · AI 생성 설명 아님')
-                st.write(f'문서에서 {counts["total"]}개 검사 항목을 추출했습니다. 문서 기준 충족 {counts["met"]}개, 주의·기준 미충족 {counts["attention"]}개, 확인 필요 {counts["unknown"]}개입니다. 이 비교만으로 질병이나 전체 건강 상태를 확정할 수 없습니다.')
-                st.caption('AI 해설은 아래 외부 전송 동의 후 생성할 수 있습니다.')
+                readings=[(row,assess(row,document_sex(clean))) for row in clean['health_checkup_results']]
+                attention=[(row,value) for row,value in readings if value.level!='normal'][:2]
+                sentences=[measurement_fields(row).name+'은(는) '+value.text+'로 표시되어 원문과 참고기준을 함께 확인할 항목입니다.' for row,value in attention]
+                if not sentences: sentences=['추출된 항목은 문서의 참고기준과 함께 읽을 수 있습니다.']
+                sentences.extend(['업로드된 자료에 있는 항목만 설명하며 전체 검진 결과로 확대하지 않습니다.','이 비교만으로 질병이나 개인별 치료 방법을 확정할 수 없습니다.'])
+                st.write(' '.join(sentences))
         with st.expander('상세 검사 결과 · 원문 대조',expanded=False):
             st.caption('기본 문서 안내 · 원문 추출값과 문서 기준을 이용한 규칙 기반 표시')
             st.caption(r['filename']+' · 원본 문서명 · '+(title or '미기재'))
@@ -324,7 +344,7 @@ if page=='대시보드':
         st.subheader('01  건강검진 결과');st.write('검사별 수치와 문서의 참고범위를 함께 확인하세요.')
     with b,st.container(border=True):
         st.subheader('02  복약안내');st.write('약품별 복용 정보를 확인하고, 직접 승인한 일정만 관리하세요.')
-    def go(): st.session_state.page='문서 분석'
+    def go(): navigate('문서 분석')
     st.button('새 문서 분석하기 →',type='primary',on_click=go)
     st.subheader('이어서 관리하기')
     a,b,c=st.columns(3)
@@ -337,64 +357,82 @@ if page=='대시보드':
     if not st.session_state.records: st.caption('분석한 문서가 이곳에 쌓입니다. 샘플 6종으로 먼저 체험해 보세요.')
 elif page=='문서 분석':
     st.title('문서 한 장, 더 쉬운 건강관리')
-    st.caption('문서 업로드 · 분석 결과는 아래에 표시되고 건강검진 / 복약 관리에도 보관됩니다.')
-    st.info('업로드 → AI 분석 → 결과 보기')
-    source=st.radio('문서 선택 방식',['내 문서 업로드','가상 샘플 체험'],horizontal=True)
-    data=None;filename=''
+    st.caption('업로드 → 명시적 동의 → AI 분석 및 해설 → 결과 보기')
+    busy=st.session_state.get('analysis_flow',{}).get('state') in BUSY
+    def source_changed():
+        st.session_state.analysis_source=st.session_state.analysis_source_widget
+        set_upload(st.session_state,None,'')
+        st.session_state.pop('analysis_file',None)
+    if 'analysis_source_widget' not in st.session_state:
+        st.session_state.analysis_source_widget=st.session_state.get('analysis_source','내 문서 업로드')
+    source=st.radio('문서 선택 방식',['내 문서 업로드','가상 샘플 체험'],horizontal=True,
+                    key='analysis_source_widget',on_change=source_changed,disabled=busy)
+    def remember_file():
+        value=st.session_state.get('analysis_file')
+        set_upload(st.session_state,value.getvalue() if value else None,value.name if value else '')
     if source=='내 문서 업로드':
-        f=st.file_uploader('건강검진 결과지 또는 약국 복약안내문',type=['pdf','png','jpg','jpeg'])
-        if f: data=f.getvalue();filename=f.name
+        f=st.file_uploader('건강검진 결과지 또는 약국 복약안내문',type=['pdf','png','jpg','jpeg'],key='analysis_file',on_change=remember_file,disabled=busy)
+        if f: set_upload(st.session_state,f.getvalue(),f.name)
     else:
-        sample=st.selectbox('샘플 선택',list(range(1,7)),format_func=lambda n:f"샘플 {n} · {['건강검진 · 표형','건강검진 · 카드형','건강검진 · 미기재 포함','복약안내 · 표형','복약안내 · 카드형','복약안내 · 미기재 포함'][n-1]}")
-        filename=f'sample{sample}.pdf';data=(ROOT/'samples'/filename).read_bytes()
-        st.caption('가상 자료이며 진료·복약에 사용할 수 없습니다. 샘플도 매번 실제 Agent를 호출합니다.')
+        if 'analysis_sample_widget' not in st.session_state:
+            st.session_state.analysis_sample_widget=st.session_state.get('analysis_sample',1)
+        def remember_sample(): st.session_state.analysis_sample=st.session_state.analysis_sample_widget
+        sample=st.selectbox('샘플 선택',list(range(1,7)),key='analysis_sample_widget',on_change=remember_sample,disabled=busy,
+                           format_func=lambda n:f"샘플 {n} · {['건강검진 · 표형','건강검진 · 카드형','건강검진 · 미기재 포함','복약안내 · 표형','복약안내 · 카드형','복약안내 · 미기재 포함'][n-1]}")
+        filename=f'sample{sample}.pdf'
+        data=(ROOT/'samples'/filename).read_bytes()
+        set_upload(st.session_state,data,filename)
+        st.caption('가상 자료이며 진료·복약에 사용할 수 없습니다. 분석 버튼을 누를 때 Upstage를 호출합니다.')
         st.download_button('샘플 원문 보기',data,file_name=filename,mime='application/pdf')
-    if data: st.success(f'선택 완료 · {filename} · {len(data)/1024:.0f}KB')
-    consent=st.checkbox('분석을 위해 문서를 Upstage API로 전송하는 데 동의합니다.')
-    st.caption('PDF·PNG·JPG 20MB 이하. PDF는 암호 없이 30페이지 이하, 사진은 3천만 화소 이하. 사진은 회전을 보정해 PDF로 변환한 뒤 분석합니다. 분석 후 Upstage 업로드 파일 삭제를 요청합니다. 제공사의 작업 결과 보관 정책은 별도로 적용됩니다.')
-    if st.button('AI 분석 시작',type='primary',disabled=not data or not consent):
-        with st.status('분석을 준비합니다',expanded=True) as status:
-            client=None
-            phase='준비'
-            started=time.monotonic()
-            history=[]
-            def show_progress(message):
+    upload=st.session_state.get('analysis_upload',{})
+    if upload.get('data'): st.success('선택 완료 · '+upload['filename'])
+    st.caption('PDF·PNG·JPG 20MB 이하. 파일과 진행 상태는 현재 세션 메모리에만 보관됩니다.')
+    st.caption('문서 원본은 Upstage로 전송됩니다. FactChat은 선택 동의 시 추출·검증 후 건강검진의 최소 구조화 항목만 받습니다.')
+    with st.expander('외부 제공처와 전송 정보 확인',expanded=False):
+        st.write('Upstage Studio Agent: 원본 PDF·사진을 Parse → Classify → Extract로 분석합니다.')
+        st.write('학교 FactChat Gateway(api.baze.co): 허용된 검사명, 검증된 수치·단위·참고기준·정해진 판정과 고정 용어 설명만 전달합니다. 이름·날짜·문서명·원본·원문 근거·자유 서술 소견은 자동 전송하지 않습니다.')
+        st.caption('검증되지 않은 항목은 외부 해설에서 제외하고 기본 결과에 남깁니다. 복약안내문은 기존 원문 확인·수동 일정 절차를 사용합니다. 업로드 파일 삭제 요청과 제공사 작업 결과 보관 정책은 별개입니다.')
+    for widget,stored in [('analysis_extract_consent','analysis_extract_agreed'),('analysis_llm_consent','analysis_factchat_agreed')]:
+        if widget not in st.session_state: st.session_state[widget]=st.session_state.get(stored,False)
+    def remember_consent(widget,stored): st.session_state[stored]=st.session_state[widget]
+    consent=st.checkbox('필수 · 분석을 위해 문서를 Upstage API로 전송하는 데 동의합니다.',key='analysis_extract_consent',on_change=remember_consent,args=('analysis_extract_consent','analysis_extract_agreed'),disabled=busy)
+    llm_consent=st.checkbox('선택 · 검증된 최소 건강검진 정보를 학교 FactChat Gateway로 전송해 AI 해설을 생성하는 데 동의합니다.',key='analysis_llm_consent',on_change=remember_consent,args=('analysis_llm_consent','analysis_factchat_agreed'),disabled=busy)
+    if not llm_consent: st.caption('FactChat 동의 없이도 Upstage 기본 분석을 이용할 수 있습니다. AI 생성 해설 대신 기본 문서 요약을 표시합니다.')
+    flow=st.session_state.get('analysis_flow',{})
+    def begin_analysis():
+        queue(st.session_state,extract_consent=st.session_state.analysis_extract_consent,
+              explanation_consent=st.session_state.analysis_llm_consent)
+        st.query_params['view']='analysis'
+        st.query_params['analysis']='started'
+    st.button('AI 분석 및 해설 보기',type='primary',on_click=begin_analysis,
+              disabled=not upload.get('data') or not consent or busy or flow.get('state')=='completed')
+    if flow.get('state') in BUSY:
+        with st.status(flow.get('phase','분석 중'),expanded=True) as status:
+            def progress(message):
                 status.update(label=message)
-                phase_label=message.split(' · ')[0]
-                if not history or history[-1]!=phase_label:
-                    status.write(message)
-                    history.append(phase_label)
-            try:
-                phase='Agent 실행'
-                client=AgentClient();job=client.analyze(data,show_progress)
-                phase='결과 처리'
-                show_progress('결과 처리 · 화면을 준비합니다')
-                logger.info('analysis stage=result_processing state=started')
-                kind,result,classification=analysis_record_data(job)
-                r=record(kind,result,filename,job.get('id',''),classification)
-                st.session_state.records.append(r);st.session_state.originals[r['id']]=data
-                st.session_state.stage_reviews[r['id']]=stage_review(job)
-                logger.info('analysis stage=result_processing state=completed elapsed_s=%d',int(time.monotonic()-started))
-                status.update(label='분석 완료 · 기록에 추가했습니다',state='complete',expanded=False)
-                if client.cleanup_warning: st.warning('Upstage 업로드 파일 삭제를 확인하지 못했습니다. Console에서 확인해 주세요.')
-                st.session_state['last_result_id']=r['id']
-                st.session_state.selected_records[kind]=r['id']
-                st.session_state.pop('record_choice_'+kind,None)
-            except AnalysisError as e:
-                logger.warning('analysis stage=%s state=error',phase)
-                status.update(label=phase+' 오류',state='error',expanded=True);st.error(str(e))
-                if client and client.cleanup_warning:
-                    st.warning('업로드 파일 삭제를 확인하지 못했습니다. Upstage Console에서 확인해 주세요.')
-            except Exception:
-                logger.error('analysis stage=%s state=unexpected_error',phase)
-                status.update(label=phase+' 오류',state='error',expanded=True)
-                st.error('분석 응답 처리에 문제가 발생했습니다. 작업은 자동 재요청하지 않습니다. Studio에서 기존 작업 상태를 확인해 주세요.')
+                status.write(message)
+            run_queued(st.session_state,AgentClient,progress)
+            current=st.session_state.analysis_flow
+            status.update(label=current['phase'],state='complete' if current['state']=='completed' else 'error' if current['state'] in ('error','interrupted') else 'running',expanded=current['state']!='completed')
+        if st.session_state.analysis_flow['state'] not in BUSY: st.rerun()
+    flow=st.session_state.get('analysis_flow',{})
+    if flow.get('state')=='completed':
+        with st.status('분석 완료 · 결과를 확인하세요',state='complete',expanded=False):
+            st.write('결과는 현재 세션에 유지되며 화면 조작으로 API를 다시 호출하지 않습니다.')
+    if flow.get('state') in ('error','interrupted'):
+        with st.status('분석 오류 · 자동 재요청하지 않습니다',state='error',expanded=False): st.write(flow['phase'])
+        st.error(flow['error'])
+    if flow.get('cleanup_warning'): st.warning('Upstage 업로드 파일 삭제를 확인하지 못했습니다. Console에서 확인해 주세요.')
+    if flow.get('state')=='completed':
+        def new_analysis():
+            set_upload(st.session_state,None,'')
+            st.session_state.pop('analysis_file',None)
+            st.session_state.session_recovery=False
+        st.button('다른 문서 분석하기',on_click=new_analysis)
     last=next((r for r in st.session_state.records if r['id']==st.session_state.get('last_result_id')),None)
     if last:
         st.divider()
-        st.caption('최근 완료한 분석 · '+last['filename'])
-        destination={'health_checkup_result':'건강검진','medication_guidance_record':'복약 관리'}.get(last.get('classification'),'기록 포트폴리오')
-        st.button(destination+'에서 이어서 보기 →',on_click=navigate,args=(destination,))
+        if flow.get('explanation_state')=='error': st.info('AI 해설을 생성하지 못해 기본 문서 요약을 표시합니다. 자동 재요청하지 않습니다.')
         analysis_view(last)
 elif page=='건강검진':
     st.caption('내 건강 공간 / 건강검진')

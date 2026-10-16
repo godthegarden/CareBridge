@@ -1036,7 +1036,7 @@ def test_mock_agent_to_ai_ui_and_uncertain_schedule_gate(monkeypatch,kind):
     app.sidebar.radio[0].set_value('문서 분석').run()
     next(r for r in app.radio if r.label=='문서 선택 방식').set_value('가상 샘플 체험').run()
     app.checkbox[0].check().run()
-    next(b for b in app.button if b.label=='AI 분석 시작').click().run()
+    next(b for b in app.button if b.label=='AI 분석 및 해설 보기').click().run()
     assert not app.exception and transport.post.call_count==0
     saved=app.session_state['records'][0]
     assert saved['classification']==kind
@@ -1414,7 +1414,7 @@ def test_health_failure_preserves_basic_summary_who_and_table_without_retries(mo
     assert not app.exception and not app.warning and not app.error
     assert any(i.value=='AI 설명을 생성하지 못해 기본 요약을 표시합니다' for i in app.info)
     body='\n'.join(m.value for m in app.markdown)
-    assert any('기본 문서 요약' in c.value for c in app.caption) and '문서에서 2개 검사 항목' in body
+    assert any('기본 문서 요약' in c.value for c in app.caption) and '### 기본 문서 요약' in body
     assert '<table aria-label="건강검진 결과"' in body and '문서 기준 초과' in body
     assert '### AI 건강검진 해설' not in body
     for guide in LIFESTYLE.values(): assert guide['text'] in body and guide['url'] in body
@@ -1565,10 +1565,10 @@ def test_health_four_cards_hide_controls_tables_and_quiz_until_opened(monkeypatc
         if node.type=='expander': return
         for child in getattr(node,'children',{}).values(): yield from visible(child)
     headings=['### AI 핵심 요약','### 어려운 검사 용어 설명','### 검사 결과 의미 해설','### 생활습관 정보 제공']
-    def assert_simple_page():
+    def assert_simple_page(generated=False):
         nodes=list(visible(app.main))
         shown=[n.value for n in nodes if n.type=='markdown']
-        assert [value for value in shown if value.startswith('### ')]==headings
+        assert [value for value in shown if value.startswith('### ')]==([headings[0] if generated else '### 기본 문서 요약']+headings[1:])
         assert not any('<table' in value for value in shown)
         assert not any(n.type in ('dataframe','json','radio','checkbox') for n in nodes)
         assert not any('원본 문서명' in n.value for n in nodes if n.type=='caption')
@@ -1589,7 +1589,7 @@ def test_health_four_cards_hide_controls_tables_and_quiz_until_opened(monkeypatc
     assert transport.post.call_count==0
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     assert not app.exception
-    assert_simple_page()
+    assert_simple_page(generated=True)
     shown='\n'.join(n.value for n in visible(app.main) if n.type=='markdown')
     assert all(part['text'] in shown for part in generated['summary'])
     for label in ['요약 근거','이해도 확인 (선택)']:
