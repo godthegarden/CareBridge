@@ -98,7 +98,8 @@ def build_facts(data):
                           'origin': 'document'})
         if health:
             facts.append({'id': f'{i}:comparison', 'item': name, 'field': 'comparison',
-                          'value': assessment.text, 'attention': attention, 'quiz_allowed': False, 'origin': 'rule', 'level': assessment.level, 'conflict': assessment.basis == 'conflict'})
+                          'value': assessment.text, 'attention': attention, 'quiz_allowed': False, 'origin': 'rule', 'level': assessment.level, 'conflict': assessment.basis == 'conflict',
+                          'direction': {'문서 기준 초과':'above','문서 범위 초과':'above','문서 기준 미달':'below','문서 범위 미만':'below'}.get(assessment.text, 'within' if assessment.level=='normal' else 'unknown' if assessment.level=='unknown' else 'category')})
             term = term_definition(name)
             if term:
                 facts.append({'id': f'{i}:meaning', 'item': name, 'field': 'meaning', 'value': term[0],
@@ -123,7 +124,7 @@ def build_facts(data):
 
 
 def fingerprint(payload, model):
-    return hashlib.sha256(json.dumps([4 if payload.get('report_version') else 3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([5 if payload.get('report_version') else 3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def validate_plan(plan, payload):

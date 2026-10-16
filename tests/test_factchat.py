@@ -636,7 +636,7 @@ def test_reviewed_notice_never_shields_an_extra_generated_medical_claim(claim):
     generated['details'][0]['text'] += ' '+REPORT_NOTICES[1]+' '+claim
     with pytest.raises(fc.ExplanationError) as raised:
         fc.validate_plan(generated, payload)
-    assert raised.value.validation_rule == 'document_medical_claim'
+    assert raised.value.validation_rule == ('document_comparison' if claim=='검사 결과는 정상입니다.' else 'document_medical_claim')
     assert raised.value.validation_section == 'details'
     assert raised.value.validation_index == 0
 
@@ -1060,3 +1060,196 @@ def test_mock_agent_to_ai_ui_and_uncertain_schedule_gate(monkeypatch,kind):
     next(c for c in app.checkbox if '개인정보가 포함될 수 있는 원본 자료' in c.label).check().run()
     assert any('가상 중간 텍스트' in t.value for t in app.text)
     assert transport.post.call_count==1 and app.session_state['records'][0]['data']==saved['data']
+
+
+def natural_report(payload):
+    """No verbatim comparison labels; the code-owned table supplies exact data."""
+    generated=plan(payload)
+    generated['summary']=[
+        {'text':'공복혈당은 검진표가 제시한 참고범위를 벗어나 있어 수치와 기준을 함께 확인할 항목입니다.', 'evidence':['1:result','1:reference']},
+        {'text':'BMI는 문서에 과체중 구간으로 적혀 있어 몸무게와 키의 관계를 이해할 때 참고할 수 있습니다.', 'evidence':['0:result','0:reference']},
+        {'text':'이 검진 결과만으로 특정 질환을 진단할 수는 없습니다.', 'evidence':['0:result','1:result']},
+    ]
+    generated['details']=[
+        {'text':'공복혈당은 음식을 먹지 않은 상태에서 혈액 속 포도당의 양을 살펴보는 검사입니다.', 'evidence':['1:meaning']},
+        {'text':'BMI는 키에 비해 몸무게가 어느 정도인지 나타내는 지표로 이해하면 됩니다.', 'evidence':['0:meaning']},
+    ]
+    return generated
+
+
+def test_scenario_a_paraphrased_summary_and_optional_definition_details_pass():
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    comparison_values=[f['value'] for f in payload['facts'] if f['field']=='comparison']
+    assert '문서 기준 초과' in comparison_values
+    assert '문서 기준 초과' not in str(generated)
+    assert fc.validate_plan(generated,payload)==generated
+    generated['details']=[]  # The exact table is independent of optional prose details.
+    assert fc.validate_plan(generated,payload)
+
+
+@pytest.mark.parametrize('sentence',[
+    '공복혈당은 음식을 먹지 않은 상태에서 혈액 속 포도당의 양을 측정한 값입니다.',
+    '이 결과가 당뇨병으로 진단할 근거가 충분하다는 뜻은 아닙니다.',
+    '약물 변경이나 치료가 필요합니다라는 뜻은 아닙니다.',
+    '정상입니다라는 표현만으로 전체 건강 상태를 확정할 수는 없습니다.',
+])
+def test_scenario_b_safe_definitions_and_scoped_limitations(sentence):
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    generated['summary'][2]={'text':sentence,'evidence':[f['id'] for f in payload['facts']]}
+    assert fc.validate_plan(generated,payload)
+
+
+@pytest.mark.parametrize('sentence',[
+    '공복혈당 측정값은 999mg/dL입니다.',
+    '공복혈당의 참고기준은 110미만입니다.',
+    '공복혈당 참고기준은 100이상입니다.',
+    '공복혈당 측정값은 108g/dL입니다.',
+    '공복혈당은 26.8로 문서에 기록되어 있습니다.',
+])
+def test_scenario_c_invented_or_altered_quantities_rejected(sentence):
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    generated['summary'][0]={'text':sentence,'evidence':[f['id'] for f in payload['facts']]}
+    with pytest.raises(fc.ExplanationError): fc.validate_plan(generated,payload)
+
+
+@pytest.mark.parametrize('sentence',[
+    '당신은 당뇨병이 확실합니다.',
+    '복용 중인 약을 지금부터 중단하세요.',
+    '원문에 없는 복용량으로 변경해서 복용하세요.',
+    '이 결과만으로 진단할 수는 없지만 당신은 당뇨병이 확실합니다.',
+    '약물 변경을 지시하는 것은 아닙니다. 하지만 약을 중단하세요.',
+])
+def test_scenario_d_unsafe_assertions_not_excused_by_limitations(sentence):
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    generated['details'][0]['text']=sentence
+    with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
+    assert error.value.validation_rule=='document_medical_claim'
+
+
+@pytest.mark.parametrize('data,sentence,rule',[
+    (HEALTH,'공복혈당은 참고범위 안에 있습니다.','document_comparison'),
+    (HEALTH,'공복혈당은 기준보다 낮습니다.','document_comparison'),
+    ({'health_checkup_results':[{'test_item_name':'공복혈당(mg/dL)','result_value':'80','reference_range':'100미만'}]},
+     '공복혈당은 문서의 참고범위를 벗어났습니다.','document_comparison'),
+    ({'health_checkup_results':[{'test_item_name':'허리둘레(cm)','result_value':'91','reference_range':'남 90이상 여 85이상'}]},
+     '허리둘레는 기준보다 높습니다.','unknown_comparison'),
+    ({'health_checkup_results':[{'test_item_name':'공복혈당(mg/dL)','result_value':'108','reference_range':'100미만','remark':'정상'}]},
+     '공복혈당은 참고범위 안에 있습니다.','document_conflict'),
+])
+def test_structured_comparison_blocks_only_explicit_contradictions(data,sentence,rule):
+    payload=fc.build_facts(data)
+    generated=plan(payload)
+    generated['summary'][0]={'text':sentence,'evidence':[f['id'] for f in payload['facts']]}
+    with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
+    assert error.value.validation_rule==rule
+
+
+def test_conflict_stays_code_owned_without_mandatory_summary_label():
+    data={'health_checkup_results':[{'test_item_name':'공복혈당(mg/dL)','result_value':'108','reference_range':'100미만','remark':'정상'}]}
+    payload=fc.build_facts(data)
+    generated=plan(payload)
+    generated['summary'][0]={'text':'공복혈당의 원문 표기와 수치를 함께 살펴보는 문서 읽기 안내입니다.','evidence':['0:result','0:remark']}
+    assert fc.validate_plan(generated,payload)
+    assert next(f for f in payload['facts'] if f['field']=='comparison')['conflict']
+
+
+def test_scenario_e_paraphrased_gateway_response_reaches_final_ui_and_quiz(monkeypatch):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from carebridge.domain import normalize
+    from carebridge.records import record
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    transport=Mock()
+    transport.post.return_value=response(payload,choices=[{'finish_reason':'stop','message':{'content':json.dumps(generated,ensure_ascii=False)}}])
+    monkeypatch.setattr(fc.requests,'Session',lambda:transport)
+    kind,clean=normalize(HEALTH)
+    original=deepcopy(clean)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
+    app.sidebar.radio[0].set_value('건강검진').run()
+    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
+    assert transport.post.call_count==0
+    next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
+    assert not app.exception and not app.warning
+    assert any(all(part['text'] in m.value for part in generated['summary']) for m in app.markdown)
+    table=next(m.value for m in app.markdown if '<table aria-label="건강검진 결과"' in m.value)
+    assert '문서 기준 초과' in table and '108' in table and '100 미만' in table
+    questions=[r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))]
+    bank={q['id']:q for q in payload['understanding_questions']}
+    questions[0].set_value(bank[generated['quiz'][0]['question_id']]['answer']).run()
+    assert any(c.value=='정답입니다.' for c in app.caption)
+    app.run()
+    assert transport.post.call_count==1 and app.session_state['records'][0]['data']==original
+
+
+def test_health_equivalent_decimal_spelling_is_data_consistent():
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    generated['summary'][0]['text']='공복혈당 측정값 108.0 mg/dL은 문서 참고기준 100.0 미만과 함께 살펴볼 항목입니다.'
+    assert fc.validate_plan(generated,payload)
+
+
+def test_health_quantities_cannot_be_borrowed_from_another_cited_item():
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    generated['summary'][0]={'text':'공복혈당 26.8 kg/m²로 기록되어 있습니다.','evidence':[f['id'] for f in payload['facts']]}
+    with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
+    assert error.value.validation_rule=='document_quantity'
+
+
+@pytest.mark.parametrize('sentence',[
+    '당신은 당뇨병입니다라는 사실에 의심이 없습니다.',
+    '복용 중인 약을 중단하세요라는 지시에 이견이 없습니다.',
+])
+def test_unrelated_negative_words_do_not_negate_diagnoses_or_directives(sentence):
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    generated['details'][0]['text']=sentence
+    with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
+    assert error.value.validation_rule=='document_medical_claim'
+
+
+def test_grounded_coordinated_measurements_are_not_assigned_to_last_named_item():
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    generated['summary'][0]={'text':'BMI와 공복혈당의 측정값은 각각 26.8 kg/m²와 108 mg/dL로 적혀 있습니다.',
+                             'evidence':[f['id'] for f in payload['facts']]}
+    assert fc.validate_plan(generated,payload)
+
+
+@pytest.mark.parametrize('sentence',[
+    '공복혈당은 참고기준을 충족한다고 단정할 수 없습니다.',
+    '공복혈당이 참고범위 안에 들어가는지 판단하려면 문서 기준을 함께 읽어야 합니다.',
+])
+def test_comparison_discussion_is_not_an_asserted_opposite_verdict(sentence):
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    generated['summary'][0]['text']=sentence
+    assert fc.validate_plan(generated,payload)
+
+
+def test_original_overweight_category_cannot_be_replaced_with_underweight():
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    generated['summary'][1]['text']='BMI는 저체중입니다.'
+    with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
+    assert error.value.validation_rule=='document_comparison'
+    generated['summary'][1]['text']='BMI는 문서에 기재된 과체중에 해당합니다.'
+    assert fc.validate_plan(generated,payload)
+
+
+def test_named_document_normality_is_not_whole_person_clinical_certainty():
+    data={'health_checkup_results':[{'test_item_name':'공복혈당(mg/dL)','result_value':'80','reference_range':'100미만'}]}
+    payload=fc.build_facts(data)
+    generated=plan(payload)
+    generated['summary'][0]={'text':'공복혈당은 문서의 참고기준에서 정상입니다.','evidence':['0:result','0:reference']}
+    assert fc.validate_plan(generated,payload)
+    for text in ['공복혈당은 정상입니다.','공복혈당의 문서 기준을 보면 당신은 정상입니다.','공복혈당은 비정상입니다.']:
+        generated['summary'][0]['text']=text
+        with pytest.raises(fc.ExplanationError): fc.validate_plan(generated,payload)
