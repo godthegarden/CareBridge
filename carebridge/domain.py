@@ -66,7 +66,7 @@ def normalize(data):
             clean[key] = value or ''
     if kind=='health_checkup_result':
         # Optional explicit metadata only; do not infer sex from names or reference labels.
-        for field in ('examinee_sex','sex','gender'):
+        for field in ('examinee_sex','sex','gender','overall_impression','overall_opinion','general_comment'):
             if field in data and isinstance(data[field],str): clean[field]=data[field]
     return kind, clean
 
@@ -125,7 +125,7 @@ def make_schedule(row, start, clocks, confirmed, *, original=None):
     if not confirmed: raise ValueError('원문 또는 전문가에게 확인한 내용을 승인해 주세요.')
     errors=field_errors(row,schedule=True)
     if original is not None and variable_schedule(original):
-        errors['administration_timing']='필요시·비일일·상충 지시는 고정 일일 일정으로 등록할 수 없습니다.'
+        errors['administration_timing']='필요시·비일일·상충·혼합 지시는 고정 일일 일정으로 등록할 수 없습니다.'
     if errors: raise ValueError(' / '.join(errors.values()))
     count=positive_int(row.get('times_per_day',''),r'(?:회)?')
     days=positive_int(row.get('days_of_administration',''),r'(?:일)?')

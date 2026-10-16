@@ -48,6 +48,7 @@ def plan(payload):
             if 'check' in fields:
                 text += ' '+fields['check']+'로 안내되어 있습니다.'
         else:
+            if 'comparison' not in fields: continue
             text = name+'는 '+fields.get('meaning', '문서에서 확인하는 검사입니다.')
             if 'result' in fields: text += ' 측정값 '+fields['result']+'을 '
             if 'reference' in fields: text += '문서 참고기준 '+fields['reference']+'과 비교하면 '
@@ -287,7 +288,7 @@ def test_both_document_screens_consent_cache_quiz_and_navigation(monkeypatch, da
     assert not app.exception and fake.call_count == 1
     assert len([r for r in app.radio if ('무엇이라고 적혀 있나요' in r.label or ('함께 읽을 때' in r.label or '확정할 수 없는' in r.label or '어떤 정보를' in r.label))]) in (2, 3)
     headings = [m.value for m in app.markdown if m.value.startswith('### ')]
-    assert headings[0] == ('### AI 건강검진 리포트' if data is HEALTH else '### AI가 풀어쓴 문서 설명')
+    assert headings[0] == ('### AI 건강검진 해설' if data is HEALTH else '### AI가 풀어쓴 문서 설명')
     assert headings[-1] == '### 문서 이해도 확인'
     if data is HEALTH:
         bank = {q['id']: q for q in payload['understanding_questions']}
@@ -593,7 +594,7 @@ def test_health_report_screen_order_collapsed_evidence_and_immediate_feedback(mo
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     assert not app.exception and fake.call_count==1
     headings=[m.value for m in app.markdown if m.value.startswith('### ')]
-    assert headings==['### AI 건강검진 리포트','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
+    assert headings==['### AI 건강검진 해설','### 어려운 검사 용어 해설','### 검사 결과의 의미','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
     expander=next(e for e in app.expander if e.label=='요약 근거')
     assert not expander.proto.expanded
     assert expander.text
@@ -824,7 +825,7 @@ def test_contextual_gateway_response_reaches_report_and_conceptual_quiz_without_
     assert any('일반 건강정보: '+SAFE_CONTEXT_SENTENCES[2] in m.value for m in app.markdown)
     assert any(c.value==AI_NOTICE for c in app.caption)
     headings=[m.value for m in app.markdown if m.value.startswith('### ')]
-    assert headings==['### AI 건강검진 리포트','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
+    assert headings==['### AI 건강검진 해설','### 어려운 검사 용어 해설','### 검사 결과의 의미','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
     questions=[r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))]
     assert 2<=len(questions)<=3
     bank={q['id']:q for q in payload['understanding_questions']}
@@ -923,7 +924,7 @@ def test_unsafe_mock_gateway_content_keeps_rule_screen_without_recall(monkeypatc
     assert not app.exception
     assert any('AI 설명을 생성하지 못해 기본 요약을 표시합니다' in i.value for i in app.info)
     assert not app.warning
-    assert not any('### AI 건강검진 리포트'==m.value for m in app.markdown)
+    assert not any('### AI 건강검진 해설'==m.value for m in app.markdown)
     assert any('<table aria-label="건강검진 결과"' in m.value for m in app.markdown)
     assert transport.post.call_count==1
     assert app.session_state['records'][0]['data']==clean
@@ -1293,7 +1294,7 @@ def test_flexible_summary_reaches_streamlit_without_punctuation_contract(monkeyp
     for guide in LIFESTYLE.values():
         assert guide['text'] in body and guide['url'] in body
     assert [m.value for m in app.markdown if m.value.startswith('### ')]==[
-        '### AI 건강검진 리포트','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
+        '### AI 건강검진 해설','### 어려운 검사 용어 해설','### 검사 결과의 의미','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
     assert len([r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))])>=2
     app.run()
     assert transport.post.call_count==1 and app.session_state['records'][0]['data']==snapshot
@@ -1409,7 +1410,7 @@ def test_health_failure_preserves_basic_summary_who_and_table_without_retries(mo
     body='\n'.join(m.value for m in app.markdown)
     assert '### 문서 기준 요약' in body and '추출된 2개 항목' in body
     assert '<table aria-label="건강검진 결과"' in body and '문서 기준 초과' in body
-    assert '### AI 건강검진 리포트' not in body
+    assert '### AI 건강검진 해설' not in body
     for guide in LIFESTYLE.values(): assert guide['text'] in body and guide['url'] in body
     assert transport.post.call_count==1
     assert not any(b.label=='동의한 정보로 설명 생성' for b in app.button)
@@ -1420,3 +1421,118 @@ def test_health_failure_preserves_basic_summary_who_and_table_without_retries(mo
     for private in ['PRIVATE_RAW_RESPONSE','가상성명','900101','test-only-secret','999mg/dL']:
         assert private not in caplog.text
     assert app.session_state['records'][0]['data']==clean
+
+
+@pytest.mark.parametrize('name,key',[
+    ('BMI','BMI'),('공복혈당','공복혈당'),('HDL-콜레스테롤','HDL'),('LDL-C','LDL'),
+    ('e-GFR','EGFR'),('추정 사구체 여과율(eGFR)','EGFR'),('AST(GOT)','AST'),('ALT','ALT')])
+def test_reviewed_terms_have_explicit_fixed_definitions(name,key):
+    from carebridge.explanation_content import term_definition,GLOSSARY
+    assert term_definition(name)==GLOSSARY[key]
+    assert term_definition('이름을 모르는 검사') is None
+
+
+@pytest.mark.parametrize('remark,contains',[
+    ('기왕력: 고혈압 치료 중','기존 질환 기록'),
+    ('신규 고혈압 의심','신규 의심 소견'),
+    ('고혈압 의심','신규 여부 확인 필요'),
+    ('기존 질환 치료 중, 다른 소견 의심','구분 확인 필요'),
+    ('과거력 없음','원문 판정·참고기준'),
+])
+def test_document_history_suspicion_and_numeric_comparison_stay_distinct(remark,contains):
+    from carebridge.checkup_reading import result_context
+    assert contains in result_context({'remark':remark,'test_item_name':'검사','result_value':'1','reference_range':'0~2'})
+    assert '수치 차이' in result_context({'test_item_name':'검사','result_value':'3','reference_range':'0~2'})
+
+
+def test_explicit_opinion_survives_record_export_but_private_identifiers_do_not_leave():
+    from carebridge.domain import normalize
+    from carebridge.records import record,export_records,import_records
+    from carebridge.checkup_reading import document_opinions,related_guides
+    data=deepcopy(HEALTH)
+    data['overall_impression']='가상성명님 원문의 참고기준과 수치를 함께 확인하세요.'
+    kind,clean=normalize(data)
+    saved=record(kind,clean,'synthetic.pdf','test',kind)
+    restored=import_records(export_records([saved]).encode())[0]
+    assert document_opinions(restored['data'])==[data['overall_impression']]
+    payload=fc.build_facts(restored['data'])
+    opinions=[f for f in payload['facts'] if f['item']=='원문 종합 소견']
+    assert len(opinions)==1 and not opinions[0]['quiz_allowed']
+    assert '가상성명' not in json.dumps(payload,ensure_ascii=False)
+    assert payload['scope']=='uploaded_document_only'
+    assert related_guides(clean)==['food','activity']
+    renal={'health_checkup_results':[{'test_item_name':'e-GFR'}]}
+    assert not related_guides(renal) and not document_opinions(renal)
+
+
+@pytest.mark.parametrize('with_opinion',[False,True])
+def test_final_mvp_health_reading_partial_document_and_optional_quiz(monkeypatch,with_opinion):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from carebridge.domain import normalize
+    from carebridge.records import record
+    data=deepcopy(HEALTH) if with_opinion else {'health_checkup_results':[
+        {'test_item_name':'HDL(mg/dL)','result_value':'42','reference_range':'60이상'},
+        {'test_item_name':'e-GFR','result_value':'90','result_unit':'mL/min','reference_range':'60이상'},
+        {'test_item_name':'AST','result_value':'20','result_unit':'U/L','reference_range':'0~40'},
+        {'test_item_name':'ALT','result_value':'22','result_unit':'U/L','reference_range':'0~40'}]}
+    if with_opinion: data['overall_impression']='문서의 참고기준과 결과를 함께 확인하세요.'
+    payload=fc.build_facts(data)
+    generated=natural_report(payload) if with_opinion else plan(payload)
+    if not with_opinion:
+        ids=[f['id'] for f in payload['facts']]
+        generated['summary']=[{'text':text,'evidence':ids} for text in [
+            '업로드된 문서의 HDL은 문서 참고기준과 차이가 있어 함께 살펴볼 항목입니다.',
+            'e-GFR은 콩팥이 혈액을 걸러내는 정도를 추정하는 값으로 이해할 수 있습니다.',
+            '이 자료만으로 특정 질병을 진단할 수는 없습니다.']]
+    transport=Mock()
+    transport.post.return_value=response(payload,choices=[{'finish_reason':'stop','message':{'content':json.dumps(generated,ensure_ascii=False)}}])
+    monkeypatch.setattr(fc.requests,'Session',lambda:transport)
+    kind,clean=normalize(data)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
+    app.sidebar.radio[0].set_value('건강검진').run()
+    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
+    next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
+    assert not app.exception and not app.warning
+    body='\n'.join(m.value for m in app.markdown)
+    assert '### AI 건강검진 해설' in body
+    assert all(part['text'] in body for part in generated['summary'])
+    assert any('전체 검진이나 모든 페이지' in c.value for c in app.caption)
+    quiz=next(e for e in app.expander if e.label=='이해도 확인 (선택)')
+    assert not quiz.proto.expanded
+    assert len(quiz.radio)>=2
+    if with_opinion:
+        assert next(e for e in app.expander if e.label=='원문 종합 소견 확인').text[0].value==data['overall_impression']
+    else:
+        assert 'HDL' in body and 'e-GFR' in body and 'AST' in body and 'ALT' in body
+        assert '<strong>LDL' not in body
+        assert not any(e.label=='원문 종합 소견 확인' for e in app.expander)
+    app.run()
+    assert transport.post.call_count==1 and app.session_state['records'][0]['data']==clean
+
+
+def test_medication_uses_no_guessed_purpose_and_blocks_mixed_source_registration():
+    from pathlib import Path
+    from datetime import date
+    from streamlit.testing.v1 import AppTest
+    from carebridge.domain import normalize,make_schedule
+    from carebridge.records import record
+    data=deepcopy(MEDS)
+    data['medication_instructions'][0]['source_excerpt']='추출 내용에 두 약품 정보 혼합'
+    kind,clean=normalize(data)
+    row=clean['medication_instructions'][0]
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
+    app.sidebar.radio[0].set_value('복약 관리').run()
+    table=next(m.value for m in app.markdown if '<table aria-label="복약안내문 약품 목록"' in m.value)
+    assert '약품 용도 확인 필요' in table and row['caution_notes'] in table
+    app.toggle[0].set_value(True).run()
+    next(t for t in app.text_input if t.label=='확인한 하루 복용 횟수').set_value('3').run()
+    next(t for t in app.text_input if t.label.startswith('알림 시각')).set_value('09:00,13:00,18:00').run()
+    next(c for c in app.checkbox if '일정 저장을 승인' in c.label).check().run()
+    assert next(b for b in app.button if b.label=='확인한 내용으로 일정 저장').disabled
+    assert not app.session_state['schedules'] and not app.exception
+    with pytest.raises(ValueError,match='혼합'):
+        make_schedule({**row,'source_excerpt':''},date(2026,10,16),['09:00','13:00','18:00'],True,original=row)

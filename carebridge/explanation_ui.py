@@ -2,9 +2,11 @@
 import streamlit as st
 from .factchat import (configuration, build_facts, fingerprint, generate_once,
                        ExplanationError, LABELS)
-from .explanation_content import question, quiz_options
-from .ui import lines
+from .explanation_content import question, quiz_options, term_definition
+from .ui import lines, table_html
 from .health_report import LIFESTYLE
+from .health import assess, document_sex, measurement_fields
+from .checkup_reading import document_opinions, related_guides, result_context
 from .health_safety import AI_NOTICE, text_kind
 
 
@@ -132,23 +134,58 @@ def comprehension(record, entry):
 
 def health_report(entry):
     plan = entry['result']['plan']
-    st.markdown('### AI 건강검진 리포트')
+    st.markdown('### AI 건강검진 해설')
     st.caption('AI 참고 설명 · 검진표에 근거한 FactChat 핵심 요약')
     st.caption(AI_NOTICE)
     st.markdown('#### AI 핵심 요약')
     st.markdown('<div class="result-note">'+lines(' '.join(('일반 건강정보: ' if text_kind(part['text'])=='general_health' else '')+part['text'] for part in plan['summary']))+'</div>', unsafe_allow_html=True)
-    general_health_guide()
     with st.expander('요약 근거', expanded=False):
         for part in plan['summary']:
             show_evidence(part, entry['payload'])
 
 
-def general_health_guide():
+def checkup_context(data):
+    """Reviewed definitions and code-owned comparisons, independent of AI success."""
+    opinions=document_opinions(data)
+    if opinions:
+        with st.expander('원문 종합 소견 확인',expanded=False):
+            for opinion in opinions: st.text(opinion)
+            st.caption('원문 기록입니다. AI가 새로 작성한 진단이 아닙니다.')
+    st.markdown('### 어려운 검사 용어 해설')
+    defined=set()
+    for row in data['health_checkup_results']:
+        name=measurement_fields(row).name
+        definition=term_definition(name)
+        if definition and definition not in defined:
+            defined.add(definition)
+            st.markdown('<p><strong>'+lines(name)+'</strong> · '+lines(definition[0])+'</p>',unsafe_allow_html=True)
+            st.markdown('[용어 설명 출처]('+definition[1]+')')
+    if not defined: st.caption('추출된 항목에 해당하는 고정 용어 설명이 없습니다.')
+    st.markdown('### 검사 결과의 의미')
+    sex=document_sex(data)
+    candidates=[row for row in data['health_checkup_results'] if
+                assess(row,sex).level!='normal' or result_context(row,sex).startswith(('원문 기존','원문 의심','원문 신규','기록 구분'))]
+    if candidates:
+        st.markdown(table_html(['항목','기록 구분','문서 기준 설명'],[
+            [lines(measurement_fields(row).name),lines(result_context(row,sex)),lines(assess(row,sex).text)]
+            for row in candidates[:5]],'검사 결과 의미'),unsafe_allow_html=True)
+        if len(candidates)>5: st.caption('주요 5개 항목입니다. 전체 항목은 상세 검사 결과에서 확인하세요.')
+    else:
+        st.caption('추출된 항목의 문서 기준 비교 결과입니다. 기준 충족만으로 전체 건강 상태를 확정하지 않습니다.')
+    st.caption('기존 질환 기록·원문 의심 소견·수치 차이는 다릅니다. 신규 여부나 판정이 불명확하면 확인 필요로 남깁니다.')
+
+
+def general_health_guide(data):
     """Reviewed local WHO information is available even without AI generation."""
+    keys=related_guides(data)
     st.markdown('### 생활 속 건강관리 가이드')
+    if not keys:
+        st.caption('이 문서의 항목에 직접 연결할 고정 가이드가 없습니다. 원문 확인과 일반 정보는 의료전문가에게 문의할 수 있습니다.')
+        return
     st.caption('검진표 원문이 아닌 일반 건강정보입니다. WHO 공식 자료를 바탕으로 정리했으며, WHO가 사용자 개인에게 제공한 권고가 아닙니다.')
     with st.container(border=True):
-        for guide in LIFESTYLE.values():
+        for key in keys:
+            guide=LIFESTYLE[key]
             st.markdown('**'+guide['title']+'**')
             st.markdown('<p>'+lines(guide['text'])+'</p>', unsafe_allow_html=True)
             st.markdown('[WHO 공식 출처 · '+guide['title']+']('+guide['url']+')')

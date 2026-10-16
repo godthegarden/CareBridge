@@ -8,7 +8,7 @@ import unicodedata
 from decimal import Decimal
 from .health_report import LIFESTYLE
 
-AI_NOTICE = '본 내용은 AI가 생성한 참고 정보이며, 의료전문가의 진단이나 처방을 대신하지 않습니다. 중요한 의료적 결정은 원문과 의료전문가를 통해 확인하세요.'
+AI_NOTICE = '본 내용은 AI가 생성한 참고 정보이며 의료전문가의 진단이나 처방을 대신하지 않습니다. 중요한 의료적 결정은 원문과 의료전문가를 통해 확인하세요.'
 DISEASE = r'(?:당뇨병?|고혈압|고지혈증|심장병|암|특정\s*(?:질환|질병))'
 DIAGNOSIS = re.compile(
     DISEASE+r'\s*(?:이|가|의|으로|로)?\s*(?:확실합니다|확실해요|확정됩니다|확정입니다|입니다|이십니다|으로\s*진단|의심됩니다|가능성이\s*높|위험이\s*높)|'

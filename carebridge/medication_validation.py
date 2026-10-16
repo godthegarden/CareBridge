@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 
 FIELDS = {'medication_name':'약품명','single_dose':'1회량','times_per_day':'횟수','days_of_administration':'기간','administration_timing':'복용 시점'}
 UNCERTAIN = re.compile(r'미기재|불명|불확실|확인\s*필요|미상|판독|인식\s*오류|OCR|\?',re.I)
-VARIABLE = re.compile(r'필요\s*시|증상\s*시|통증\s*시|격일|매주|주\s*[1-7]\s*회|월수금|교대|상충|모순|충돌')
+VARIABLE = re.compile(r'필요\s*시|증상\s*시|통증\s*시|격일|매주|주\s*[1-7]\s*회|월수금|교대|상충|모순|충돌|(?:추출(?:된)?\s*(?:내용|정보|값)|약품(?:별)?\s*정보)[^.!?]{0,15}(?:혼합|섞임|구분\s*불가)')
 DOSE = re.compile(r'\s*(\d+(?:\.\d+)?)(?:\s*/\s*(\d+(?:\.\d+)?))?\s*(정|캡슐|포|개|회분|mL|ml|mg|g|방울|패치|매|단위|IU)\s*',re.I)
 
 
@@ -35,5 +35,5 @@ def field_errors(row, *, schedule=False):
         if not match or int(match[1])>limit:
             errors[field]=FIELDS[field]+'의 고정 수치 확인 필요'
     if variable_schedule(row):
-        errors['administration_timing']='필요시·비일일·상충 지시 확인 필요 (고정 일일 일정 미지원)'
+        errors['administration_timing']='필요시·비일일·상충·혼합 지시 확인 필요 (고정 일일 일정 미지원)'
     return errors

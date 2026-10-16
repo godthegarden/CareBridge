@@ -16,6 +16,7 @@ from .health import assess, document_sex, measurement_fields
 from .explanation_content import SYSTEM, HEALTH_SYSTEM, LABELS, term_definition, validate_content
 from .health_report import question_bank
 from .output_contract import response_format
+from .checkup_reading import document_opinions
 from .medication_validation import field_errors
 
 BASE = 'https://api.baze.co/v1/gateway'
@@ -114,17 +115,24 @@ def build_facts(data):
             if checks:
                 facts.append({'id': f'{i}:check', 'item': name, 'field': 'check', 'value': ' / '.join(checks),
                               'attention': True, 'quiz_allowed': False, 'origin': 'rule'})
+    if health:
+        for index,opinion in enumerate(document_opinions(clean)):
+            value=_sanitize(opinion,names)
+            if value:
+                facts.append({'id':f'document{index}:remark','item':'원문 종합 소견','field':'remark',
+                              'value':value,'attention':True,'quiz_allowed':False,'origin':'document'})
     if not any(f['origin'] == 'document' for f in facts):
         raise ExplanationError('설명에 사용할 명확한 추출 항목이 없습니다. 원문을 먼저 확인해 주세요.')
     payload = {'kind': kind, 'facts': facts}
     if health:
         payload['report_version'] = 2
+        payload['scope']='uploaded_document_only'
         payload['understanding_questions'] = question_bank(facts)
     return payload
 
 
 def fingerprint(payload, model):
-    return hashlib.sha256(json.dumps([7 if payload.get('report_version') else 3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([8 if payload.get('report_version') else 3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def validate_plan(plan, payload):

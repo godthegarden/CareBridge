@@ -182,7 +182,7 @@ def test_analysis_title_uses_classify_not_extracted_title(classification,title,g
     elif group=='medication_instructions':
         assert any(m.value=='### 01. 약품별 복약정보' for m in app.markdown)
     else:
-        assert any(m.value=='### 검사항목별 결과' for m in app.markdown)
+        assert any(m.value=='### 상세 검진 수치' for m in app.markdown)
 
 
 def test_classification_mismatch_and_empty_extraction_are_safe():

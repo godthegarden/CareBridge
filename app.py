@@ -10,7 +10,7 @@ from carebridge.documents import original_type
 from carebridge.records import record, export_records, import_records
 from carebridge.ui import summary_html, table_html, lines, badge
 from carebridge.health import assess, document_sex, summarize, measurement_fields
-from carebridge.explanation_ui import easy_explanation, comprehension, general_health_guide
+from carebridge.explanation_ui import easy_explanation, comprehension, general_health_guide, checkup_context
 from carebridge.medication_validation import field_errors, variable_schedule
 from carebridge.stage_review import stage_review
 
@@ -131,13 +131,19 @@ def analysis_view(r):
         st.warning('Classify 분류와 Extract 항목이 일치하지 않습니다. 문서 유형 확인이 필요합니다.')
         return
     view_record={**r,'data':clean}
+    if classification=='health_checkup_result':
+        st.caption('업로드된 문서에서 추출한 항목만 설명합니다. 전체 검진이나 모든 페이지를 확인한 결과로 해석하지 마세요.')
     easy_entry=easy_explanation(view_record)
     st.caption('기본 문서 안내 · 원문 추출값과 문서 기준을 이용한 규칙 기반 표시')
     if classification=='medication_guidance_record':
         meds(view_record)
     else:
         health(view_record,report=bool(easy_entry and easy_entry['payload'].get('report_version')))
-    comprehension(view_record,easy_entry)
+    if classification=='health_checkup_result' and easy_entry:
+        with st.expander('이해도 확인 (선택)',expanded=False):
+            comprehension(view_record,easy_entry)
+    else:
+        comprehension(view_record,easy_entry)
     if classification=='health_checkup_result':
         st.button('건강기록 보관 및 내보내기 →',on_click=navigate,args=('기록 포트폴리오',),key=r['id']+'manage_records')
 
@@ -163,16 +169,14 @@ def health(r,report=False):
     measurements=[measurement_fields(row) for row in rows]
     counts=summarize(assessments)
     normal,attention,unknown=counts['met'],counts['attention'],counts['unknown']
-    if report:
-        st.markdown('### 상세 검진 수치')
-    else:
+    if not report:
         st.markdown('### 문서 기준 요약')
         st.markdown('<div class="result-note">'+lines(f'추출된 {counts["total"]}개 항목 중 문서 기준 충족 {normal}개, 주의·기준 미충족 {attention}개, 확인 필요 {unknown}개입니다.',
             '원문 판정을 우선합니다. 숫자 기준 충족은 의학적 정상 판정을 의미하지 않습니다.')+'</div>',unsafe_allow_html=True)
+    checkup_context(r['data'])
+    general_health_guide(r['data'])
+    st.markdown('### 상세 검진 수치')
     st.markdown(summary_html([('검사항목 수',f'{counts["total"]}개'),('문서 기준 충족',f'{normal}개'),('기준 미충족',f'{attention}개'),('확인 필요',f'{unknown}개')]),unsafe_allow_html=True)
-    if not report:
-        general_health_guide()
-        st.markdown('### 검사항목별 결과')
     st.caption('검진일 · '+(r['data'].get('health_examination_date') or '미기재'))
     only_attention=draft_input(st.checkbox,'확인이 필요한 항목만 보기',r['id']+'health_filter',False)
     visible=[(i,row,assessment) for i,(row,assessment) in enumerate(zip(rows,assessments)) if not only_attention or assessment.level!='normal']
@@ -204,12 +208,13 @@ def meds(r):
         return lines(row[field] or '미기재')+('<br>'+badge('확인 필요',tone='unknown') if field in checks else '')
     st.markdown('### 01. 약품별 복약정보')
     st.markdown(summary_html([('인식한 약품',f'{len(rows)}개'),('확인 필요 정보',f'{sum(map(len,issues_by_row))}건')]),unsafe_allow_html=True)
+    st.caption('검증된 약품정보 데이터가 연결되지 않아 약 이름으로 용도·성분·효능을 추측하지 않습니다.')
     st.caption('횟수와 일수는 원문 표기입니다. 횟수가 하루 기준인지 확인한 뒤 일정에 등록하세요.')
-    st.markdown(table_html(['약품명 / 확인 상태','1회량','원문 횟수','투약 일수','복용 시점','원문 주의사항'],[
+    st.markdown(table_html(['약품명 / 확인 상태','1회량','원문 횟수','투약 일수','복용 시점','약품 용도','원문 주의사항'],[
         [lines(row['medication_name'] or '약품명 확인 필요')+'<br>'+badge(f'확인 필요 {len(issues)}건',True),
          medication_value(row,'single_dose',checks),medication_value(row,'times_per_day',checks),
          medication_value(row,'days_of_administration',checks),medication_value(row,'administration_timing',checks),
-         lines(row['caution_notes'] or '추출 내용 없음')]
+         lines('약품 용도 확인 필요'),lines(row['caution_notes'] or '추출 내용 없음')]
         for row,issues,checks in zip(rows,issues_by_row,checks_by_row)],'복약안내문 약품 목록'),unsafe_allow_html=True)
     st.divider()
     st.markdown('### 02. 복약 일정 관리')
@@ -232,7 +237,7 @@ def meds(r):
             confirmed=draft_input(st.checkbox,'원본 또는 전문가를 통해 약품명·용량·하루 기준 횟수·기간·시점·시작일·알림 시각을 모두 확인하고 일정 저장을 승인합니다.',key+'confirmed',False)
             blocking=field_errors(verified,schedule=True)
             if variable_schedule(row):
-                blocking['administration_timing']='필요시·비일일·상충 지시는 고정 일일 일정으로 등록할 수 없습니다.'
+                blocking['administration_timing']='필요시·비일일·상충·혼합 지시는 고정 일일 일정으로 등록할 수 없습니다.'
             if blocking: st.warning(' / '.join(blocking.values()))
             if st.button('확인한 내용으로 일정 저장',key=key+'save',type='primary',disabled=bool(blocking)):
                 try:
