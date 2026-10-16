@@ -58,6 +58,16 @@ def plan(payload):
                if medication else
                [{'text': '이번 문서에서는 '+'와 '.join(row[0]['item'] for row in rows.values())+'의 기준을 눈여겨볼 필요가 있습니다.', 'evidence': ids},
                 {'text': '문서 기준과의 비교 결과를 중심으로 확인하고 불명확한 정보는 확인 필요로 표시합니다.', 'evidence': ids}])
+    if payload.get('report_version'):
+        from carebridge.health_report import LIMIT
+        summary.append({'text': LIMIT, 'evidence': ids})
+        bank = payload['understanding_questions']
+        selected = []
+        for theme in ('relationship', 'limits', 'meaning'):
+            candidate = next((q for q in bank if q['theme']==theme), None)
+            if candidate: selected.append({'question_id': candidate['id']})
+        if len(selected)<2: selected=[]
+        return {'summary': summary, 'details': details, 'lifestyle': ['food','activity'], 'quiz': selected}
     return {'summary': summary, 'details': details,
             'quiz': [{'fact_id': f['id'], 'explanation': {'text': f['item']+'의 '+fc.LABELS[f['field']]+'은 '+f['value']+'로 문서에 적혀 있습니다.',
                       'evidence': [f['id']]}} for f in eligible[:3]] if len(eligible)>=2 else []}
@@ -109,7 +119,7 @@ def test_uncertain_and_missing_evidence_not_used_for_questions():
     assert not payload['facts'][0]['quiz_allowed']
     generated = plan(payload)
     assert fc.validate_plan(generated, payload)['quiz'] == []
-    generated['quiz'] = [{'fact_id': '0:result', 'explanation': {'text': '검사의 결과는 OCR 불확실로 표시되어 있습니다.', 'evidence': ['0:result']}}]
+    generated['quiz'] = [{'question_id':'0:result'}]
     with pytest.raises(fc.ExplanationError):
         fc.validate_plan(generated, payload)
 
@@ -274,21 +284,34 @@ def test_both_document_screens_consent_cache_quiz_and_navigation(monkeypatch, da
     fake.assert_not_called()
     next(b for b in app.button if b.label == '동의한 정보로 설명 생성').click().run()
     assert not app.exception and fake.call_count == 1
-    assert len([r for r in app.radio if '무엇이라고 적혀 있나요' in r.label]) in (2, 3)
+    assert len([r for r in app.radio if ('무엇이라고 적혀 있나요' in r.label or ('함께 읽을 때' in r.label or '확정할 수 없는' in r.label or '어떤 정보를' in r.label))]) in (2, 3)
     headings = [m.value for m in app.markdown if m.value.startswith('### ')]
-    assert headings[0] == '### AI가 풀어쓴 문서 설명'
+    assert headings[0] == ('### AI 건강검진 리포트' if data is HEALTH else '### AI가 풀어쓴 문서 설명')
     assert headings[-1] == '### 문서 이해도 확인'
-    questions = [r for r in app.radio if '무엇이라고 적혀 있나요' in r.label]
-    for radio, quiz in zip(questions, plan(payload)['quiz']):
-        fact = next(f for f in payload['facts'] if f['id']==quiz['fact_id'])
-        radio.set_value(fact['value'])
-    app.run()
-    next(b for b in app.button if b.label == '선택한 답 채점하기').click().run()
-    assert any('문항 정답' in element.value for element in app.success)
-    app.sidebar.radio[0].set_value('대시보드').run()
-    app.sidebar.radio[0].set_value(page).run()
-    assert not app.exception and fake.call_count == 1
-    assert any('문항 정답' in element.value for element in app.success)
+    if data is HEALTH:
+        bank = {q['id']: q for q in payload['understanding_questions']}
+        quizzes = plan(payload)['quiz']
+        questions = [r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))]
+        for radio, item in zip(questions, quizzes):
+            radio.set_value(bank[item['question_id']]['answer'])
+        app.run()
+        assert any(c.value=='정답입니다.' for c in app.caption)
+        app.sidebar.radio[0].set_value('대시보드').run()
+        app.sidebar.radio[0].set_value(page).run()
+        assert not app.exception and fake.call_count==1
+        assert any(c.value=='정답입니다.' for c in app.caption)
+    else:
+        questions = [r for r in app.radio if '무엇이라고 적혀 있나요' in r.label]
+        for radio, quiz in zip(questions, plan(payload)['quiz']):
+            fact = next(f for f in payload['facts'] if f['id']==quiz['fact_id'])
+            radio.set_value(fact['value'])
+        app.run()
+        next(b for b in app.button if b.label == '선택한 답 채점하기').click().run()
+        assert any('문항 정답' in element.value for element in app.success)
+        app.sidebar.radio[0].set_value('대시보드').run()
+        app.sidebar.radio[0].set_value(page).run()
+        assert not app.exception and fake.call_count == 1
+        assert any('문항 정답' in element.value for element in app.success)
     assert app.session_state['records'][0]['data'] == clean
     assert not app.session_state['schedules']
 
@@ -344,7 +367,7 @@ def test_real_response_text_is_preserved_not_replaced_by_templates(data):
     assert result['source'] == 'factchat_generated'
     assert result['plan'] == generated
     assert all(isinstance(block['text'], str) for block in result['plan']['summary'])
-    assert len(result['plan']['summary']) in (2, 3)
+    assert len(result['plan']['summary']) in ((3,4,5) if data is HEALTH else (2,3))
     assert transport.post.call_args.kwargs['json']['max_tokens'] == 4500
     if data is HEALTH:
         prose = ' '.join(block['text'] for block in generated['details'])
@@ -444,21 +467,17 @@ def test_gateway_parse_to_ui_prose_and_mixed_multiple_choice_grading(monkeypatch
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     assert not app.exception and transport.post.call_count==1
-    assert any(generated['details'][0]['text'] in m.value for m in app.markdown)
-    assert any('FactChat 생성 설명' in c.value for c in app.caption)
-    assert any('규칙 기반 표시' in c.value for c in app.caption)
-    assert next(b for b in app.button if b.label=='선택한 답 채점하기').disabled
-    questions = [r for r in app.radio if '무엇이라고 적혀 있나요' in r.label]
-    for index, (radio, quiz) in enumerate(zip(questions, generated['quiz'])):
-        fact = next(f for f in payload['facts'] if f['id']==quiz['fact_id'])
-        radio.set_value(fact['value'] if index==0 else '이 항목은 문서에 기재되지 않았습니다.')
+    assert any(generated['summary'][0]['text'] in m.value for m in app.markdown)
+    assert any('FactChat 핵심 요약' in c.value for c in app.caption)
+    bank = {q['id']: q for q in payload['understanding_questions']}
+    questions = [r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))]
+    for index, (radio, item) in enumerate(zip(questions, generated['quiz'])):
+        quiz = bank[item['question_id']]
+        radio.set_value(quiz['answer'] if index==0 else quiz['options'][1])
     app.run()
-    next(b for b in app.button if b.label=='선택한 답 채점하기').click().run()
-    assert any('3문항 중 1문항 정답' in s.value for s in app.success)
-    assert any(generated['quiz'][0]['explanation']['text'] in m.value for m in app.markdown)
-    first = next(r for r in app.radio if '무엇이라고 적혀 있나요' in r.label)
-    first.set_value('이 항목은 문서에 기재되지 않았습니다.').run()
-    assert not app.success  # Changing an answer invalidates the previous grade.
+    assert any(c.value=='정답입니다.' for c in app.caption)
+    assert any(c.value.startswith('다시 확인해 보세요.') for c in app.caption)
+    assert any(bank[generated['quiz'][0]['question_id']]['explanation'] in m.value for m in app.markdown)
     assert transport.post.call_count==1
 
 
@@ -508,3 +527,87 @@ def test_unknown_test_name_cannot_be_added_to_a_grounded_summary():
     generated['summary'][0]['text'] = '총콜레스테롤의 기준을 눈여겨볼 필요가 있습니다.'
     with pytest.raises(fc.ExplanationError, match='검사 용어'):
         fc.validate_plan(generated, payload)
+
+
+def test_health_report_is_short_and_lifestyle_only_uses_reviewed_templates():
+    from carebridge.health_report import LIFESTYLE, LIMIT
+    payload = fc.build_facts(HEALTH)
+    generated = plan(payload)
+    assert fc.validate_plan(generated, payload)
+    assert 3 <= len(generated['summary']) <= 5
+    assert sum(len(p['text']) for p in generated['summary']) <= 650
+    assert generated['summary'][-1]['text']==LIMIT
+    assert 2 <= len(generated['lifestyle']) <= 3
+    assert all(key in LIFESTYLE for key in generated['lifestyle'])
+    for invalid in [['food','treatment'], ['food']*2, ['food'], [{'text':'약을 늘리세요'}]]:
+        bad = deepcopy(generated)
+        bad['lifestyle'] = invalid
+        with pytest.raises(fc.ExplanationError):
+            fc.validate_plan(bad, payload)
+    bad = deepcopy(generated)
+    bad['summary'][0]['text'] = '문서의 항목을 함께 확인해 볼 필요가 있습니다. '*15
+    with pytest.raises(fc.ExplanationError):
+        fc.validate_plan(bad, payload)
+
+
+def test_health_understanding_questions_require_concepts_not_number_recall():
+    payload = fc.build_facts(HEALTH)
+    generated = plan(payload)
+    bank = {q['id']: q for q in payload['understanding_questions']}
+    selected = [bank[item['question_id']] for item in generated['quiz']]
+    assert 2 <= len(selected) <= 3
+    assert {q['theme'] for q in selected} >= {'relationship', 'limits'}
+    for q in selected:
+        assert not re.search(r'몇|측정값은|무엇이라고 적혀', q['question'])
+        assert q['answer'] in q['options'] and len(set(q['options']))==3
+        assert q['explanation'] and q['evidence']
+        assert all(i in {f['id'] for f in payload['facts']} for i in q['evidence'])
+    generated['quiz'][0] = {'question_id':'0:result'}
+    with pytest.raises(fc.ExplanationError, match='암기|검증되지'):
+        fc.validate_plan(generated, payload)
+
+
+def test_report_conflicting_verdict_requires_review_in_summary_and_details():
+    data = {'health_checkup_results':[{'test_item_name':'공복혈당(mg/dL)','result_value':'108','reference_range':'100미만','remark':'정상'}]}
+    payload = fc.build_facts(data)
+    comparison = next(f for f in payload['facts'] if f['field']=='comparison')
+    assert comparison['level']=='unknown' and comparison['conflict']
+    generated = plan(payload)
+    generated['summary'][0]['text'] = '공복혈당의 원문 판정과 수치 기준이 달라 확인 필요로 남겨 두었습니다.'
+    assert fc.validate_plan(generated, payload)
+    generated['summary'][0]['text'] = '공복혈당은 정상입니다.'
+    with pytest.raises(fc.ExplanationError, match='충돌'):
+        fc.validate_plan(generated, payload)
+
+
+def test_health_report_screen_order_collapsed_details_and_immediate_feedback(monkeypatch):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from carebridge.domain import normalize
+    from carebridge.records import record
+    payload = fc.build_facts(HEALTH)
+    generated = plan(payload)
+    fake = Mock(return_value={'plan': generated, 'usage':{}, 'model':'solar-mini4', 'source':'factchat_generated'})
+    monkeypatch.setattr(fc, 'request_plan', fake)
+    kind, clean = normalize(HEALTH)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'), default_timeout=15).run()
+    app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
+    app.sidebar.radio[0].set_value('건강검진').run()
+    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
+    next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
+    assert not app.exception and fake.call_count==1
+    headings=[m.value for m in app.markdown if m.value.startswith('### ')]
+    assert headings==['### AI 건강검진 리포트','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
+    expander=next(e for e in app.expander if e.label=='항목별 AI 설명 · 요약 근거')
+    assert not expander.proto.expanded
+    assert any(generated['details'][0]['text'] in m.value for m in expander.markdown)
+    assert any('검진표 원문이 아닌 일반 건강정보' in c.value for c in app.caption)
+    assert not any(b.label=='선택한 답 채점하기' for b in app.button)
+    bank={q['id']:q for q in payload['understanding_questions']}
+    q=bank[generated['quiz'][0]['question_id']]
+    radio=next(r for r in app.radio if r.label.startswith('1. '))
+    radio.set_value(q['answer']).run()
+    assert any(c.value=='정답입니다.' for c in app.caption)
+    assert any(q['explanation'] in m.value for m in app.markdown)
+    assert fake.call_count==1

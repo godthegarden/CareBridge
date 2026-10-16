@@ -168,7 +168,7 @@ def test_parenthesized_categories_and_readable_reference(reference):
     result=assess(row('26.8',reference))
     assert result.text=='과체중' and result.level=='caution'
     assert '과체중: 25.0~29.9' in result.reference
-    assert assess(row('26.8',reference,remark='정상')).text=='원문 판정 · 정상'
+    assert assess(row('26.8',reference,remark='정상')).basis=='conflict'
 
 
 @pytest.mark.parametrize('reference',['과체중(25-29.9','과체중25-29.9)','과체중(29.9-25)'])
@@ -252,3 +252,19 @@ def test_meaning_missing_conflicting_or_explicitly_normal():
     value['source_excerpt']='복부비만 기준'
     assert assess(value,'male').text=='원문 위험 기준 해당'
     assert assess(value).level=='unknown'
+
+
+@__import__('pytest').mark.parametrize('value,reference,remark',[
+    ('108','100미만','정상'),
+    ('42','60이상','이상 없음'),
+    ('15','정상 범위: 10~20','이상'),
+    ('26.8','정상(18.5-24.9) / 과체중(25-29.9)','정상'),
+])
+def test_explicit_verdict_and_clear_numeric_opposition_requires_review(value,reference,remark):
+    from copy import deepcopy
+    item=row(value,reference,remark=remark)
+    original=deepcopy(item)
+    result=assess(item)
+    assert result.level=='unknown' and result.basis=='conflict'
+    assert result.text.startswith('확인 필요')
+    assert item==original

@@ -131,7 +131,10 @@ def analysis_view(r):
     view_record={**r,'data':clean}
     easy_entry=easy_explanation(view_record)
     st.caption('기본 문서 안내 · 원문 추출값과 문서 기준을 이용한 규칙 기반 표시')
-    (meds if classification=='medication_guidance_record' else health)(view_record)
+    if classification=='medication_guidance_record':
+        meds(view_record)
+    else:
+        health(view_record,report=bool(easy_entry and easy_entry['payload'].get('report_version')))
     comprehension(view_record,easy_entry)
     if classification=='health_checkup_result':
         st.button('건강기록 보관 및 내보내기 →',on_click=navigate,args=('기록 포트폴리오',),key=r['id']+'manage_records')
@@ -142,18 +145,21 @@ def source_material(r):
             evidence(r)
 
 
-def health(r):
+def health(r,report=False):
     rows=r['data']['health_checkup_results']
     sex=document_sex(r['data'])
     assessments=[assess(row,sex) for row in rows]
     measurements=[measurement_fields(row) for row in rows]
     counts=summarize(assessments)
     normal,attention,unknown=counts['met'],counts['attention'],counts['unknown']
-    st.markdown('### 문서 기준 요약')
-    st.markdown('<div class="result-note">'+lines(f'추출된 {counts["total"]}개 항목 중 문서 기준 충족 {normal}개, 주의·기준 미충족 {attention}개, 확인 필요 {unknown}개입니다.',
-        '원문 판정을 우선합니다. 숫자 기준 충족은 의학적 정상 판정을 의미하지 않습니다.')+'</div>',unsafe_allow_html=True)
+    if report:
+        st.markdown('### 상세 검진 수치')
+    else:
+        st.markdown('### 문서 기준 요약')
+        st.markdown('<div class="result-note">'+lines(f'추출된 {counts["total"]}개 항목 중 문서 기준 충족 {normal}개, 주의·기준 미충족 {attention}개, 확인 필요 {unknown}개입니다.',
+            '원문 판정을 우선합니다. 숫자 기준 충족은 의학적 정상 판정을 의미하지 않습니다.')+'</div>',unsafe_allow_html=True)
     st.markdown(summary_html([('검사항목 수',f'{counts["total"]}개'),('문서 기준 충족',f'{normal}개'),('기준 미충족',f'{attention}개'),('확인 필요',f'{unknown}개')]),unsafe_allow_html=True)
-    st.markdown('### 검사항목별 결과')
+    if not report: st.markdown('### 검사항목별 결과')
     st.caption('검진일 · '+(r['data'].get('health_examination_date') or '미기재'))
     only_attention=draft_input(st.checkbox,'확인이 필요한 항목만 보기',r['id']+'health_filter',False)
     visible=[(i,row,assessment) for i,(row,assessment) in enumerate(zip(rows,assessments)) if not only_attention or assessment.level!='normal']

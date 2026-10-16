@@ -13,7 +13,8 @@ from dotenv import load_dotenv
 from .client import ROOT
 from .domain import normalize, missing
 from .health import assess, document_sex, measurement_fields
-from .explanation_content import SYSTEM, LABELS, term_definition, validate_content
+from .explanation_content import SYSTEM, HEALTH_SYSTEM, LABELS, term_definition, validate_content
+from .health_report import question_bank
 
 BASE = 'https://api.baze.co/v1/gateway'
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ def build_facts(data):
                           'origin': 'document'})
         if health:
             facts.append({'id': f'{i}:comparison', 'item': name, 'field': 'comparison',
-                          'value': assessment.text, 'attention': attention, 'quiz_allowed': False, 'origin': 'rule', 'level': assessment.level})
+                          'value': assessment.text, 'attention': attention, 'quiz_allowed': False, 'origin': 'rule', 'level': assessment.level, 'conflict': assessment.basis == 'conflict'})
             term = term_definition(name)
             if term:
                 facts.append({'id': f'{i}:meaning', 'item': name, 'field': 'meaning', 'value': term[0],
@@ -103,11 +104,15 @@ def build_facts(data):
                               'attention': True, 'quiz_allowed': False, 'origin': 'rule'})
     if not any(f['origin'] == 'document' for f in facts):
         raise ExplanationError('설명에 사용할 명확한 추출 항목이 없습니다. 원문을 먼저 확인해 주세요.')
-    return {'kind': kind, 'facts': facts}
+    payload = {'kind': kind, 'facts': facts}
+    if health:
+        payload['report_version'] = 1
+        payload['understanding_questions'] = question_bank(facts)
+    return payload
 
 
 def fingerprint(payload, model):
-    return hashlib.sha256(json.dumps([3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([4 if payload.get('report_version') else 3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def validate_plan(plan, payload):
@@ -146,7 +151,7 @@ def request_plan(payload, *, consent=False, session=None):
     try:
         response = transport.post(BASE + '/chat/completions/',
             headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
-            json={'model': model, 'messages': [{'role': 'system', 'content': SYSTEM},
+            json={'model': model, 'messages': [{'role': 'system', 'content': HEALTH_SYSTEM if payload.get('report_version') else SYSTEM},
                   {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}],
                   'stream': False, 'max_tokens': 4500}, timeout=(5, 35), allow_redirects=False)
         logger.info('factchat state=response http=%d elapsed_s=%.1f', response.status_code, time.monotonic()-started)

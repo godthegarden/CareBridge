@@ -4,6 +4,7 @@ from .factchat import (configuration, build_facts, fingerprint, generate_once,
                        ExplanationError, LABELS)
 from .explanation_content import question, quiz_options
 from .ui import lines
+from .health_report import LIFESTYLE
 
 
 def easy_explanation(record):
@@ -57,6 +58,9 @@ def easy_explanation(record):
     if result.get('source') != 'factchat_generated':
         st.warning('이전 형식의 응답에는 AI 설명 문장이 없습니다. 기본 문서 안내를 확인해 주세요.')
         return None
+    if entry['payload'].get('report_version'):
+        health_report(entry)
+        return entry
     st.markdown('### AI가 풀어쓴 문서 설명')
     st.caption('FactChat 생성 설명 · 응답 수신 및 근거 검증 완료. 원문 추출값과 대조해 읽어 주세요.')
     plan = result['plan']
@@ -83,6 +87,9 @@ def show_evidence(block, payload):
 
 def comprehension(record, entry):
     if not entry:
+        return
+    if entry['payload'].get('report_version'):
+        health_comprehension(record, entry)
         return
     st.markdown('### 문서 이해도 확인')
     st.caption('문서에 적힌 내용을 고르는 객관식입니다. 답안은 원문 추출값으로 채점하며 복약 일정에 반영하지 않습니다.')
@@ -117,3 +124,54 @@ def comprehension(record, entry):
             st.markdown('<p>'+lines(quiz['explanation']['text'])+'</p>', unsafe_allow_html=True)
             with st.expander(f'{index+1}번 원문 근거'):
                 show_evidence(quiz['explanation'], entry['payload'])
+
+
+def health_report(entry):
+    plan = entry['result']['plan']
+    st.markdown('### AI 건강검진 리포트')
+    st.caption('AI 참고 설명 · 검진표에 근거한 FactChat 핵심 요약')
+    st.markdown('#### 이번 건강검진 한눈에 보기')
+    st.markdown('<div class="result-note">'+lines(' '.join(part['text'] for part in plan['summary']))+'</div>', unsafe_allow_html=True)
+    st.markdown('### 생활 속 건강관리 가이드')
+    st.caption('검진표 원문이 아닌 일반 건강정보입니다. 개인별 치료 권고가 아닙니다.')
+    with st.container(border=True):
+        for key in plan['lifestyle']:
+            guide = LIFESTYLE[key]
+            st.markdown('**'+guide['title']+'**')
+            st.markdown('<p>'+lines(guide['text'])+'</p>', unsafe_allow_html=True)
+    st.caption('궁금한 점이나 서로 다른 판정이 있다면 원문을 의료전문가와 함께 확인해 보세요.')
+    with st.expander('항목별 AI 설명 · 요약 근거', expanded=False):
+        for part in plan['summary']:
+            show_evidence(part, entry['payload'])
+        for detail in plan['details']:
+            st.markdown('<p>'+lines(detail['text'])+'</p>', unsafe_allow_html=True)
+            show_evidence(detail, entry['payload'])
+    with st.expander('일반 건강정보 출처', expanded=False):
+        for key in plan['lifestyle']:
+            guide = LIFESTYLE[key]
+            st.markdown('['+guide['title']+' · WHO/CDC]('+guide['url']+')')
+
+
+def health_comprehension(record, entry):
+    st.markdown('### 문서 이해도 확인')
+    st.caption('숫자 암기 대신 결과를 읽는 방법을 확인해 보세요. 선택하면 해설이 표시됩니다.')
+    bank = {q['id']: q for q in entry['payload']['understanding_questions']}
+    quizzes = [bank[item['question_id']] for item in entry['result']['plan']['quiz']]
+    if not quizzes:
+        st.info('의미와 정답을 명확히 확인할 근거가 부족해 문제를 표시하지 않습니다.')
+        return
+    answers = st.session_state.setdefault('factchat_answers', {})
+    for index, quiz in enumerate(quizzes):
+        widget_key = record['id']+entry['key']+str(index)+'understanding'
+        if widget_key not in st.session_state:
+            st.session_state[widget_key] = answers.get(widget_key)
+        def remember(key=widget_key):
+            answers[key] = st.session_state[key]
+        offset = sum(ord(c) for c in quiz['id']) % 3
+        options = quiz['options'][offset:]+quiz['options'][:offset]
+        chosen = st.radio(f'{index+1}. '+quiz['question'], options, index=None, key=widget_key, on_change=remember)
+        if chosen is not None:
+            st.caption('정답입니다.' if chosen==quiz['answer'] else '다시 확인해 보세요. 정답: '+quiz['answer'])
+            st.markdown('<p>'+lines(quiz['explanation'])+'</p>', unsafe_allow_html=True)
+            with st.expander(f'{index+1}번 설명의 근거', expanded=False):
+                show_evidence({'evidence': quiz['evidence']}, entry['payload'])

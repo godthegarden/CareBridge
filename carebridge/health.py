@@ -208,6 +208,15 @@ def assess(row,sex=None):
         explicit=explicit_verdict(row.get('result_value'))
     if explicit:
         level,label=explicit
+        # A clear source verdict and a clear numeric comparison may disagree.
+        # Preserve both raw inputs; do not turn that disagreement into a diagnosis.
+        if re.fullmatch(NUMBER,cleaned(row.get('result_value'),measurement_fields(row).unit)):
+            calculated=assess({**row,'remark':''},sex)
+            if ((level=='normal' and calculated.level in ('caution','abnormal')) or
+                    (level in ('caution','abnormal') and calculated.level=='normal' and
+                     (threshold_meaning(row)=='normal' or calculated.basis=='document_category'))):
+                return result('unknown','확인 필요 · 원문 판정과 수치 기준 불일치',
+                              '원문 판정과 수치 비교가 다릅니다. 어느 쪽도 임의로 확정하지 않고 원본 대조가 필요합니다.',basis='conflict')
         return result(level,'원문 판정 · '+label if level!='unknown' else '확인 필요','문서의 항목별 판정을 우선 표시했습니다. 원문 비고를 대조하세요.',basis='document_verdict')
     unit=measurement_fields(row).unit
     value=cleaned(row.get('result_value'),unit)
