@@ -158,7 +158,7 @@ def test_medication_dashboard_is_compact_and_requires_opt_in():
 
 @__import__('pytest').mark.parametrize('classification,title,group',[
     ('medication_guidance_record','복약안내문 분석 결과','medication_instructions'),
-    ('health_checkup_result','건강검진 결과 분석','health_checkup_results'),
+    ('health_checkup_result','AI 건강검진 해설','health_checkup_results'),
     (None,'문서 유형 확인 필요','medication_instructions'),
     ('unsupported','문서 유형 확인 필요','health_checkup_results'),
 ])
@@ -396,7 +396,7 @@ def test_required_health_cases_reach_table_and_match_summary(sex):
     app.session_state['records']=[item]
     app.sidebar.radio[0].set_value('건강검진').run()
     assert not app.exception
-    assert any(m.value=='### 문서 기준 요약' for m in app.markdown)
+    assert any(c.value=='기본 문서 요약 · AI 생성 설명 아님' for c in app.caption)
     summary=next(m.value for m in app.markdown if 'class="result-summary"' in m.value)
     values=[part.split('</strong>')[0] for part in summary.split('<strong>')[1:]]
     assert values==(['6개','1개','4개','1개'] if sex else ['6개','0개','4개','2개'])

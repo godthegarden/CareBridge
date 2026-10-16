@@ -10,9 +10,10 @@ from carebridge.documents import original_type
 from carebridge.records import record, export_records, import_records
 from carebridge.ui import summary_html, table_html, lines, badge
 from carebridge.health import assess, document_sex, summarize, measurement_fields
-from carebridge.explanation_ui import easy_explanation, comprehension, general_health_guide, checkup_context
+from carebridge.explanation_ui import easy_explanation, comprehension, general_health_guide, checkup_context, health_report, show_evidence, HEALTH_NOTICE
 from carebridge.medication_validation import field_errors, variable_schedule
 from carebridge.stage_review import stage_review
+from carebridge.checkup_reading import document_opinions
 
 logger=logging.getLogger('carebridge.app')
 logger.setLevel(logging.INFO)
@@ -106,12 +107,15 @@ def evidence(r):
 
 def analysis_view(r):
     classification=r.get('classification')
-    titles={'medication_guidance_record':'복약안내문 분석 결과','health_checkup_result':'건강검진 결과 분석'}
+    titles={'medication_guidance_record':'복약안내문 분석 결과','health_checkup_result':'AI 건강검진 해설'}
     valid=classification in GROUPS and classification==r.get('kind')
     st.subheader(titles[classification] if valid else '문서 유형 확인 필요')
     data=r.get('data') or {}
     title=data.get('record_document_title') or data.get('document_title')
-    st.caption(r['filename']+' · 원본 문서명 · '+(title or '미기재'))
+    if valid and classification=='health_checkup_result':
+        st.caption(HEALTH_NOTICE)
+    else:
+        st.caption(r['filename']+' · 원본 문서명 · '+(title or '미기재'))
     if not valid:
         st.warning('실제 Agent 분류 정보가 없거나 미지원 유형 또는 추출 정보와 불일치합니다. 문서 유형을 확인해 주세요.')
         st.caption('파일명이나 추출 필드로 문서 유형을 추측하지 않습니다. 기존 기록은 분류 정보가 포함되지 않았을 수 있습니다.')
@@ -132,20 +136,42 @@ def analysis_view(r):
         return
     view_record={**r,'data':clean}
     if classification=='health_checkup_result':
-        st.caption('업로드된 문서에서 추출한 항목만 설명합니다. 전체 검진이나 모든 페이지를 확인한 결과로 해석하지 마세요.')
+        summary_slot=st.container(border=True)
+        checkup_context(clean)
+        general_health_guide(clean)
+        with st.expander('AI 설명 생성 · 외부 전송 동의',expanded=False):
+            easy_entry=easy_explanation(view_record,compact=True,render=False)
+        with summary_slot:
+            if easy_entry:
+                health_report(easy_entry)
+            else:
+                counts=summarize([assess(row,document_sex(clean)) for row in clean['health_checkup_results']])
+                st.markdown('### AI 핵심 요약')
+                st.caption('기본 문서 요약 · AI 생성 설명 아님')
+                st.write(f'문서에서 {counts["total"]}개 검사 항목을 추출했습니다. 문서 기준 충족 {counts["met"]}개, 주의·기준 미충족 {counts["attention"]}개, 확인 필요 {counts["unknown"]}개입니다. 이 비교만으로 질병이나 전체 건강 상태를 확정할 수 없습니다.')
+                st.caption('AI 해설은 아래 외부 전송 동의 후 생성할 수 있습니다.')
+        with st.expander('상세 검사 결과 · 원문 대조',expanded=False):
+            st.caption('기본 문서 안내 · 원문 추출값과 문서 기준을 이용한 규칙 기반 표시')
+            st.caption(r['filename']+' · 원본 문서명 · '+(title or '미기재'))
+            st.caption('업로드된 문서의 항목만 설명합니다. 전체 검진이나 모든 페이지를 확인한 결과로 해석하지 마세요.')
+            health(view_record,report=True)
+            opinions=document_opinions(clean)
+            if opinions:
+                with st.expander('원문 종합 소견 확인',expanded=False):
+                    for opinion in opinions: st.text(opinion)
+        if easy_entry:
+            with st.expander('요약 근거',expanded=False):
+                for part in easy_entry['result']['plan']['summary']:
+                    show_evidence(part,easy_entry['payload'])
+            with st.expander('이해도 확인 (선택)',expanded=False):
+                comprehension(view_record,easy_entry)
+        st.button('건강기록 보관 및 내보내기 →',on_click=navigate,args=('기록 포트폴리오',),key=r['id']+'manage_records')
+        return
     easy_entry=easy_explanation(view_record)
     st.caption('기본 문서 안내 · 원문 추출값과 문서 기준을 이용한 규칙 기반 표시')
-    if classification=='medication_guidance_record':
-        meds(view_record)
-    else:
-        health(view_record,report=bool(easy_entry and easy_entry['payload'].get('report_version')))
-    if classification=='health_checkup_result' and easy_entry:
-        with st.expander('이해도 확인 (선택)',expanded=False):
-            comprehension(view_record,easy_entry)
-    else:
-        comprehension(view_record,easy_entry)
-    if classification=='health_checkup_result':
-        st.button('건강기록 보관 및 내보내기 →',on_click=navigate,args=('기록 포트폴리오',),key=r['id']+'manage_records')
+    meds(view_record)
+    comprehension(view_record,easy_entry)
+
 
 def source_material(r):
     with st.expander('원본 자료 대조하기'):
@@ -173,8 +199,6 @@ def health(r,report=False):
         st.markdown('### 문서 기준 요약')
         st.markdown('<div class="result-note">'+lines(f'추출된 {counts["total"]}개 항목 중 문서 기준 충족 {normal}개, 주의·기준 미충족 {attention}개, 확인 필요 {unknown}개입니다.',
             '원문 판정을 우선합니다. 숫자 기준 충족은 의학적 정상 판정을 의미하지 않습니다.')+'</div>',unsafe_allow_html=True)
-    checkup_context(r['data'])
-    general_health_guide(r['data'])
     st.markdown('### 상세 검진 수치')
     st.markdown(summary_html([('검사항목 수',f'{counts["total"]}개'),('문서 기준 충족',f'{normal}개'),('기준 미충족',f'{attention}개'),('확인 필요',f'{unknown}개')]),unsafe_allow_html=True)
     st.caption('검진일 · '+(r['data'].get('health_examination_date') or '미기재'))
@@ -314,7 +338,7 @@ if page=='대시보드':
 elif page=='문서 분석':
     st.title('문서 한 장, 더 쉬운 건강관리')
     st.caption('문서 업로드 · 분석 결과는 아래에 표시되고 건강검진 / 복약 관리에도 보관됩니다.')
-    st.info('01 문서 선택 → 02 전송 동의 및 분석 → 03 원문과 분석 결과 확인')
+    st.info('업로드 → AI 분석 → 결과 보기')
     source=st.radio('문서 선택 방식',['내 문서 업로드','가상 샘플 체험'],horizontal=True)
     data=None;filename=''
     if source=='내 문서 업로드':

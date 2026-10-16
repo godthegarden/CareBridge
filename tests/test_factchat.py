@@ -32,6 +32,12 @@ def offline(monkeypatch):
     monkeypatch.setattr(requests.sessions.Session, 'request', block)
 
 
+def open_explanation(app):
+    # Medication keeps its existing opt-in button; health exposes consent directly.
+    buttons=[b for b in app.button if b.label=='쉬운 설명 보기' and not b.disabled]
+    if buttons: buttons[0].click().run()
+
+
 def plan(payload):
     facts = payload['facts']
     eligible = [f for f in facts if f['quiz_allowed']]
@@ -278,7 +284,7 @@ def test_both_document_screens_consent_cache_quiz_and_navigation(monkeypatch, da
     app.session_state['records'] = [item]
     app.sidebar.radio[0].set_value(page).run()
     fake.assert_not_called()
-    next(b for b in app.button if b.label == '쉬운 설명 보기').click().run()
+    open_explanation(app)
     generate = next(b for b in app.button if b.label == '동의한 정보로 설명 생성')
     assert generate.disabled
     fake.assert_not_called()
@@ -288,7 +294,7 @@ def test_both_document_screens_consent_cache_quiz_and_navigation(monkeypatch, da
     assert not app.exception and fake.call_count == 1
     assert len([r for r in app.radio if ('무엇이라고 적혀 있나요' in r.label or ('함께 읽을 때' in r.label or '확정할 수 없는' in r.label or '어떤 정보를' in r.label))]) in (2, 3)
     headings = [m.value for m in app.markdown if m.value.startswith('### ')]
-    assert headings[0] == ('### AI 건강검진 해설' if data is HEALTH else '### AI가 풀어쓴 문서 설명')
+    assert headings[0] == ('### AI 핵심 요약' if data is HEALTH else '### AI가 풀어쓴 문서 설명')
     assert headings[-1] == '### 문서 이해도 확인'
     if data is HEALTH:
         bank = {q['id']: q for q in payload['understanding_questions']}
@@ -347,7 +353,7 @@ def test_ui_failure_keeps_rule_results_and_never_retries(monkeypatch):
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'), default_timeout=15).run()
     app.session_state['records'] = [record(kind, clean, 'synthetic.pdf', 'test', kind)]
     app.sidebar.radio[0].set_value('복약 관리').run()
-    next(b for b in app.button if b.label == '쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     next(b for b in app.button if b.label == '동의한 정보로 설명 생성').click().run()
     app.run()
@@ -464,7 +470,7 @@ def test_gateway_parse_to_ui_prose_and_mixed_multiple_choice_grading(monkeypatch
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'), default_timeout=15).run()
     app.session_state['records'] = [item]
     app.sidebar.radio[0].set_value('건강검진').run()
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     assert not app.exception and transport.post.call_count==1
@@ -494,7 +500,7 @@ def test_http_success_but_invalid_content_shows_failure_not_ai_heading(monkeypat
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'), default_timeout=15).run()
     app.session_state['records'] = [record(kind, clean, 'synthetic.pdf', 'test', kind)]
     app.sidebar.radio[0].set_value('건강검진').run()
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     app.run()
@@ -589,17 +595,17 @@ def test_health_report_screen_order_collapsed_evidence_and_immediate_feedback(mo
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'), default_timeout=15).run()
     app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
     app.sidebar.radio[0].set_value('건강검진').run()
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     assert not app.exception and fake.call_count==1
     headings=[m.value for m in app.markdown if m.value.startswith('### ')]
-    assert headings==['### AI 건강검진 해설','### 어려운 검사 용어 해설','### 검사 결과의 의미','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
+    assert headings==['### AI 핵심 요약','### 어려운 검사 용어 설명','### 검사 결과 의미 해설','### 생활습관 정보 제공','### 상세 검진 수치','### 문서 이해도 확인']
     expander=next(e for e in app.expander if e.label=='요약 근거')
     assert not expander.proto.expanded
     assert expander.text
     assert not any(e.label=='항목별 AI 설명 · 요약 근거' for e in app.expander)
-    assert any('검진표 원문이 아닌 일반 건강정보' in c.value for c in app.caption)
+    assert any('WHO 자료 기반 일반 건강정보' in c.value for c in app.caption)
     assert not any(b.label=='선택한 답 채점하기' for b in app.button)
     bank={q['id']:q for q in payload['understanding_questions']}
     q=bank[generated['quiz'][0]['question_id']]
@@ -806,7 +812,7 @@ def test_contextual_gateway_response_reaches_report_and_conceptual_quiz_without_
     from streamlit.testing.v1 import AppTest
     from carebridge.domain import normalize
     from carebridge.records import record
-    from carebridge.health_safety import AI_NOTICE
+    from carebridge.explanation_ui import HEALTH_NOTICE as AI_NOTICE
     payload=fc.build_facts(HEALTH)
     generated=contextual_report(payload)
     transport=Mock()
@@ -816,7 +822,7 @@ def test_contextual_gateway_response_reaches_report_and_conceptual_quiz_without_
     app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
     app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
     app.sidebar.radio[0].set_value('건강검진').run()
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     assert transport.post.call_count==0
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
@@ -825,7 +831,7 @@ def test_contextual_gateway_response_reaches_report_and_conceptual_quiz_without_
     assert any('일반 건강정보: '+SAFE_CONTEXT_SENTENCES[2] in m.value for m in app.markdown)
     assert any(c.value==AI_NOTICE for c in app.caption)
     headings=[m.value for m in app.markdown if m.value.startswith('### ')]
-    assert headings==['### AI 건강검진 해설','### 어려운 검사 용어 해설','### 검사 결과의 의미','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
+    assert headings==['### AI 핵심 요약','### 어려운 검사 용어 설명','### 검사 결과 의미 해설','### 생활습관 정보 제공','### 상세 검진 수치','### 문서 이해도 확인']
     questions=[r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))]
     assert 2<=len(questions)<=3
     bank={q['id']:q for q in payload['understanding_questions']}
@@ -917,7 +923,7 @@ def test_unsafe_mock_gateway_content_keeps_rule_screen_without_recall(monkeypatc
     app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
     app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
     app.sidebar.radio[0].set_value('건강검진').run()
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     app.run()
@@ -1035,7 +1041,7 @@ def test_mock_agent_to_ai_ui_and_uncertain_schedule_gate(monkeypatch,kind):
     saved=app.session_state['records'][0]
     assert saved['classification']==kind
     assert app.session_state['stage_reviews'][saved['id']]['parse_text']=='가상 중간 텍스트: 원문과 대조 필요'
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     assert not app.exception
@@ -1163,7 +1169,7 @@ def test_scenario_e_paraphrased_gateway_response_reaches_final_ui_and_quiz(monke
     app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
     app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
     app.sidebar.radio[0].set_value('건강검진').run()
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     assert transport.post.call_count==0
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
@@ -1270,7 +1276,7 @@ def test_flexible_summary_reaches_streamlit_without_punctuation_contract(monkeyp
     from carebridge.domain import normalize
     from carebridge.records import record
     from carebridge.health_report import LIFESTYLE
-    from carebridge.health_safety import AI_NOTICE
+    from carebridge.explanation_ui import HEALTH_NOTICE as AI_NOTICE
     payload=fc.build_facts(HEALTH)
     original=natural_report(payload)
     generated=summary_variant(original,variant)
@@ -1283,7 +1289,7 @@ def test_flexible_summary_reaches_streamlit_without_punctuation_contract(monkeyp
     app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
     app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
     app.sidebar.radio[0].set_value('건강검진').run()
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     assert transport.post.call_count==0
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
@@ -1294,7 +1300,7 @@ def test_flexible_summary_reaches_streamlit_without_punctuation_contract(monkeyp
     for guide in LIFESTYLE.values():
         assert guide['text'] in body and guide['url'] in body
     assert [m.value for m in app.markdown if m.value.startswith('### ')]==[
-        '### AI 건강검진 해설','### 어려운 검사 용어 해설','### 검사 결과의 의미','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
+        '### AI 핵심 요약','### 어려운 검사 용어 설명','### 검사 결과 의미 해설','### 생활습관 정보 제공','### 상세 검진 수치','### 문서 이해도 확인']
     assert len([r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))])>=2
     app.run()
     assert transport.post.call_count==1 and app.session_state['records'][0]['data']==snapshot
@@ -1401,14 +1407,14 @@ def test_health_failure_preserves_basic_summary_who_and_table_without_retries(mo
     app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
     app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
     app.sidebar.radio[0].set_value('건강검진').run()
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     app.run()
     assert not app.exception and not app.warning and not app.error
     assert any(i.value=='AI 설명을 생성하지 못해 기본 요약을 표시합니다' for i in app.info)
     body='\n'.join(m.value for m in app.markdown)
-    assert '### 문서 기준 요약' in body and '추출된 2개 항목' in body
+    assert any('기본 문서 요약' in c.value for c in app.caption) and '문서에서 2개 검사 항목' in body
     assert '<table aria-label="건강검진 결과"' in body and '문서 기준 초과' in body
     assert '### AI 건강검진 해설' not in body
     for guide in LIFESTYLE.values(): assert guide['text'] in body and guide['url'] in body
@@ -1492,12 +1498,12 @@ def test_final_mvp_health_reading_partial_document_and_optional_quiz(monkeypatch
     app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
     app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
     app.sidebar.radio[0].set_value('건강검진').run()
-    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    open_explanation(app)
     next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     assert not app.exception and not app.warning
     body='\n'.join(m.value for m in app.markdown)
-    assert '### AI 건강검진 해설' in body
+    assert app.subheader[0].value=='AI 건강검진 해설' and '### AI 핵심 요약' in body
     assert all(part['text'] in body for part in generated['summary'])
     assert any('전체 검진이나 모든 페이지' in c.value for c in app.caption)
     quiz=next(e for e in app.expander if e.label=='이해도 확인 (선택)')
@@ -1536,3 +1542,57 @@ def test_medication_uses_no_guessed_purpose_and_blocks_mixed_source_registration
     assert not app.session_state['schedules'] and not app.exception
     with pytest.raises(ValueError,match='혼합'):
         make_schedule({**row,'source_excerpt':''},date(2026,10,16),['09:00','13:00','18:00'],True,original=row)
+
+
+def test_health_four_cards_hide_controls_tables_and_quiz_until_opened(monkeypatch):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from carebridge.domain import normalize
+    from carebridge.records import record
+    from carebridge.explanation_ui import HEALTH_NOTICE
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    transport=Mock()
+    transport.post.return_value=response(payload,choices=[{'finish_reason':'stop','message':{'content':json.dumps(generated,ensure_ascii=False)}}])
+    monkeypatch.setattr(fc.requests,'Session',lambda:transport)
+    kind,clean=normalize(HEALTH)
+    item=record(kind,clean,'synthetic.pdf','test',kind)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.session_state['records']=[item]
+    app.sidebar.radio[0].set_value('건강검진').run()
+    def visible(node):
+        yield node
+        if node.type=='expander': return
+        for child in getattr(node,'children',{}).values(): yield from visible(child)
+    headings=['### AI 핵심 요약','### 어려운 검사 용어 설명','### 검사 결과 의미 해설','### 생활습관 정보 제공']
+    def assert_simple_page():
+        nodes=list(visible(app.main))
+        shown=[n.value for n in nodes if n.type=='markdown']
+        assert [value for value in shown if value.startswith('### ')]==headings
+        assert not any('<table' in value for value in shown)
+        assert not any(n.type in ('dataframe','json','radio','checkbox') for n in nodes)
+        assert not any('원본 문서명' in n.value for n in nodes if n.type=='caption')
+        assert app.subheader[0].value=='AI 건강검진 해설'
+        assert any(c.value==HEALTH_NOTICE for c in app.caption)
+        for label in ['AI 설명 생성 · 외부 전송 동의','상세 검사 결과 · 원문 대조']:
+            assert not next(e for e in app.expander if e.label==label).proto.expanded
+    assert_simple_page()
+    assert transport.post.call_count==0
+    assert not any(b.label=='쉬운 설명 보기' for b in app.button)
+    generate=next(b for b in app.button if b.label=='동의한 정보로 설명 생성')
+    assert generate.disabled
+    consent=next(e for e in app.expander if e.label=='AI 설명 생성 · 외부 전송 동의')
+    assert any('Gateway 전송에 동의' in c.label for c in consent.checkbox)
+    details=next(e for e in app.expander if e.label=='상세 검사 결과 · 원문 대조')
+    assert any('<table aria-label="건강검진 결과"' in m.value for m in details.markdown)
+    next(c for c in consent.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
+    assert transport.post.call_count==0
+    next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
+    assert not app.exception
+    assert_simple_page()
+    shown='\n'.join(n.value for n in visible(app.main) if n.type=='markdown')
+    assert all(part['text'] in shown for part in generated['summary'])
+    for label in ['요약 근거','이해도 확인 (선택)']:
+        assert not next(e for e in app.expander if e.label==label).proto.expanded
+    app.run()
+    assert transport.post.call_count==1 and app.session_state['records'][0]['data']==clean
