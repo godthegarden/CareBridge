@@ -1,7 +1,8 @@
 """Grounding checks and answer construction for generated document explanations."""
 import re
 import unicodedata
-from .health_report import LIMIT, REPORT_NOTICES, strip_reviewed_notices, validate_report_selection
+from .health_report import LIMIT, validate_report_selection
+from .health_safety import is_limit_notice, validate_health_claims, validate_health_quantities
 
 # General term definitions only. No external thresholds, diagnoses, or care advice.
 # Sources: CDC BMI; US National Library of Medicine MedlinePlus medical tests.
@@ -63,14 +64,14 @@ HEALTH_SYSTEM = """
 summary: 전체 핵심을 3~5문장, 문장당 최대 220자·합계 최대 650자로 구성한다.
 검사항목을 하나씩 나열하지 말고 주의·이상·기준 차이와 확인 필요를 묶어 설명한다.
 원문 판정과 계산의 충돌은 반드시 요약에 '확인 필요'로 포함하고 어느 쪽도 확정하지 않는다.
-마지막 문장은 반드시 다음 문구를 그대로 사용한다: """ + LIMIT + """
+진단·처방을 대신하지 않는다는 안내는 앱에서 고정 표시한다. 요약에도 필요하면 다음과 같은 한계를 자연스럽게 설명하라: """ + LIMIT + """
 details: 선택한 항목만 최대 8개, 기본 화면에서는 접혀 표시된다. 모든 용어를 나열할 필요 없다.
 각 상세 설명은 한 항목의 result/reference/comparison/meaning이 있으면 모두 evidence에 포함하라.
 항목명과 comparison 문구는 그대로 보존하고, 판정 불가 항목의 높고 낮음을 추측하지 마라.
 생활습관은 자유 문장을 생성하지 말고 lifestyle에 food/activity/sleep 중 2~3개 ID만 선택하라.
 food=균형 잡힌 식습관, activity=몸 상태에 맞춘 일상 신체활동, sleep=일정한 수면 습관이다.
 이는 검진표 원문이 아닌 일반 건강정보다. 개인별 치료나 질병별 처방을 만들지 않는다.
-생활습관 문장(검증된 템플릿 원문 포함)을 summary/details에 섞지 말고 lifestyle에는 ID만 반환하라.
+일반 건강정보와 개인별 처방을 구분하라. 일반적인 식습관·신체활동의 의미는 설명할 수 있으나 개인별 목표·치료를 생성하지 마라. lifestyle에는 사전 검증된 가이드 ID만 반환하라.
 quiz: understanding_questions에 제공된 검증된 question_id만 2~3개 선택한다.
 측정값이나 기준 숫자를 암기하는 문항은 금지한다. relationship 하나와 meaning 또는 limits 하나를 포함하라.
 검증된 문제가 두 개 미만이면 빈 배열. 문제·보기·정답·해설은 앱의 검증된 문구 그대로 사용한다.
@@ -90,8 +91,7 @@ def numbers(text):
 
 # Additional clinical claims/instructions are rejected, including common unsupported
 # adverse effects. This is deliberately conservative, not an assertion of semantic proof.
-UNSUPPORTED = re.compile(r'당뇨|고혈압|고지혈증|심장|심혈관|뇌졸중|위험|의심|가능성|증상|예방|권고|암(?:이|입니다|으로|을)|질환|진단|치료|처방|증량|감량|중단|변경|권장|추천|운동|식단|재검|병원|전문의|부작용|성분|알레르기|어지럼|메스꺼|구토|두통|간손상|졸음|금주|음주|상호작용|함께\s*복용|정상|문제없|문제가\s*없|안전합니다|건강합니다')
-LIFESTYLE_PROSE = re.compile(r'운동|식단|식습관|신체활동|수면|걷기|걸으|채소|통곡물|포화지방|설탕|잠자리')
+MEDICATION_UNSUPPORTED = re.compile(r'당뇨|고혈압|고지혈증|심장|심혈관|뇌졸중|위험|의심|가능성|증상|예방|권고|암(?:이|입니다|으로|을)|질환|진단|치료|처방|증량|감량|중단|변경|권장|추천|운동|식단|재검|병원|전문의|부작용|성분|알레르기|어지럼|메스꺼|구토|두통|간손상|졸음|금주|음주|상호작용|함께\s*복용|정상|문제없|문제가\s*없|안전합니다|건강합니다')
 TIMING = re.compile(r'하루|매일|아침|점심|저녁|취침|식전|식후|공복|\d+\s*시|[한두세네다섯여섯일곱여덟아홉열]+\s*(?:정|회|일|캡슐)')
 # A closed connective vocabulary for medication prose, outside literal source values.
 MED_WORDS = ('이', '의', '수', '투약', '주의사항', '그', '해당', '약', '약품', '문서', '원문', '안내', '기재', '정보', '내용', '적혀', '적힌',
@@ -142,19 +142,19 @@ def validate_content(plan, payload, error_type):
                 fail('근거에 없는 검사 용어가 포함되어 있습니다.', 'document_test_term')
         if not numbers(text) <= numbers(corpus):
             fail('근거에 없는 수치가 포함되어 있습니다.', 'document_number')
-        # Match approved notices BEFORE stripping source literals (which may be short).
-        rest = strip_reviewed_notices(text) if report else text
+        rest = text
         for literal in sorted({f['value'] for f in selected} | {f['item'] for f in selected}, key=len, reverse=True):
             rest = rest.replace(literal, '')
         if report:
             conflicts = [f for f in selected if f.get('conflict')]
-            if conflicts and text.strip() not in REPORT_NOTICES and ('확인 필요' not in text or re.search(r'(?:정상|이상)(?:으로)?\s*(?:입니다|확정|판정합니다)', text)):
+            if conflicts and not is_limit_notice(text) and ('확인 필요' not in text or re.search(r'(?:정상|이상)(?:으로)?\s*(?:입니다|확정|판정합니다)', text)):
                 fail('원문 판정과 수치 기준의 충돌은 확인 필요로 보존해야 합니다.', 'document_conflict')
-        if report and LIFESTYLE_PROSE.search(rest):
-            fail('생활습관 안내는 설명 문장에 생성하지 않고 별도 템플릿으로만 제공할 수 있습니다.', 'document_lifestyle_prose')
-        if UNSUPPORTED.search(rest):
-            fail('근거 밖의 의료적 판단이나 지시가 포함되어 있습니다.', 'document_medical_claim')
+        if not medication:
+            validate_health_claims(text, selected, fail)
+            validate_health_quantities(text, selected, payload['facts'], fail)
         if medication:
+            if MEDICATION_UNSUPPORTED.search(rest):
+                fail('근거 밖의 의료적 판단이나 지시가 포함되어 있습니다.', 'document_medical_claim')
             if TIMING.search(rest):
                 fail('원문에 없는 복용 시점이나 횟수 해석이 포함되어 있습니다.', 'medication_timing')
             for token in re.findall(r'[가-힣]+', rest):
@@ -172,8 +172,8 @@ def validate_content(plan, payload, error_type):
     if report:
         if sum(len(part['text']) for part in plan['summary']) > 650 or any(len(part['text']) > 220 for part in plan['summary']):
             fail('핵심 요약이 너무 깁니다.')
-        if plan['summary'][-1]['text'].strip() not in REPORT_NOTICES:
-            fail('검진 결과로 확정할 수 없는 사항의 안내가 필요합니다.', 'summary_limit_notice')
+        # The UI always displays the reviewed diagnostic/prescription disclaimer.
+        # Safe prose must not fail because its disclaimer differs or is omitted.
         conflict_ids = {f['id'] for f in facts.values() if f.get('conflict')}
         if not conflict_ids <= {fid for part in plan['summary'] if '확인 필요' in part['text'] for fid in part['evidence']}:
             fail('판정 충돌 항목을 핵심 요약에서 확인 필요로 안내해야 합니다.')

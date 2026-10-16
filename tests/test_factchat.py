@@ -660,8 +660,11 @@ def test_lifestyle_and_document_prose_are_validated_as_separate_authorities():
     generated = plan(payload)
     generated['lifestyle'] = ['food','activity','sleep']
     assert fc.validate_plan(generated, payload)
-    # Even approved general-health text may not masquerade as document-derived prose.
-    for text in [LIFESTYLE['food']['text'], '걷기 시간을 늘리고 수면 시간을 정해 드립니다.']:
+    # Reviewed general information is allowed; personal lifestyle prescriptions are not.
+    reviewed = deepcopy(generated)
+    reviewed['summary'][0]['text'] = LIFESTYLE['food']['text']
+    assert fc.validate_plan(reviewed,payload)
+    for text in ['걷기 시간을 늘리고 수면 시간을 정해 드립니다.']:
         bad = deepcopy(generated)
         bad['summary'][0]['text'] = text
         with pytest.raises(fc.ExplanationError) as raised:
@@ -718,3 +721,224 @@ def test_gateway_accepts_reviewed_notice_and_template_ids_without_retry(caplog):
     assert fc.request_plan(payload,consent=True,session=transport)['plan']==generated
     assert 'state=content_validated' in caplog.text
     assert transport.post.call_count == 1
+
+
+SAFE_CONTEXT_SENTENCES = [
+    '이 검진 결과만으로 특정 질환을 진단할 수는 없습니다.',
+    '공복혈당은 음식을 먹지 않은 상태에서 혈액 속 포도당의 양을 측정한 값입니다.',
+    '균형 잡힌 식습관과 꾸준한 신체활동은 일반적인 건강관리에 도움이 될 수 있습니다.',
+]
+
+
+def contextual_report(payload):
+    result = plan(payload)
+    ids = [f['id'] for f in payload['facts']]
+    result['summary'] = [{'text': text, 'evidence': ids} for text in SAFE_CONTEXT_SENTENCES]
+    result['summary'].append({'text':'공복혈당 측정값 108은 문서의 참고기준 100미만과 달라 원문과 함께 확인할 필요가 있습니다.', 'evidence': ids})
+    return result
+
+
+@pytest.mark.parametrize('sentence', SAFE_CONTEXT_SENTENCES+[
+    '정상 범위라는 표현은 검진표의 비교 기준을 뜻하며 질환의 확정 진단을 의미하지 않습니다.',
+    '가능성이나 의심이라는 표현은 확정 진단과 같은 뜻이 아닙니다.',
+    '이 수치만으로 치료가 필요하다고 판단하기는 어렵습니다.',
+])
+def test_health_context_allows_terms_definitions_limits_and_general_health(sentence):
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][1]['text']=sentence
+    assert fc.validate_plan(generated,payload) is generated
+
+
+@pytest.mark.parametrize('sentence',[
+    '당신은 당뇨병이 확실합니다.',
+    '복용 중인 약을 지금부터 중단하세요.',
+    '원문에 없는 복용량으로 변경해서 복용하세요.',
+    '이 검진 결과만으로 진단할 수는 없지만 당신은 당뇨병이 확실합니다.',
+    '이 수치로 고혈압의 가능성이 높습니다.',
+    '문서에 108이 적혀 있으므로 당신은 당뇨병이 확실합니다.',
+])
+def test_health_context_blocks_asserted_diagnosis_and_personal_medication_actions(sentence):
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][1]['text']=sentence
+    with pytest.raises(fc.ExplanationError) as error:
+        fc.validate_plan(generated,payload)
+    assert error.value.validation_rule=='document_medical_claim'
+    assert error.value.validation_section=='summary' and error.value.validation_index==1
+
+
+@pytest.mark.parametrize('sentence,rule',[
+    ('공복혈당 측정값 109를 확인해 보세요.','document_number'),
+    ('공복혈당 측정값 100을 확인해 보세요.','document_result_value'),
+    ('공복혈당 참고기준은 108입니다.','document_reference_value'),
+    ('공복혈당 참고기준은 100이상입니다.','document_reference_condition'),
+    ('공복혈당의 참고기준은 108미만입니다.','document_reference_condition'),
+    ('공복혈당 측정값 108g/dL을 확인해 보세요.','document_quantity'),
+    ('공복혈당 측정값 108µg/dL을 확인해 보세요.','document_quantity'),
+    ('BMI 측정값 26.8mg/dL을 확인해 보세요.','document_quantity'),
+    ('BMI의 참고범위는 25~26.8입니다.','document_reference_condition'),
+])
+def test_health_quantity_and_reference_manipulation_is_not_hidden_by_valid_numbers(sentence,rule):
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][1]['text']=sentence
+    with pytest.raises(fc.ExplanationError) as error:
+        fc.validate_plan(generated,payload)
+    assert error.value.validation_rule==rule
+
+
+def test_contextual_health_prose_still_requires_actual_evidence_ids():
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][1]['evidence']=['unknown-evidence']
+    with pytest.raises(fc.ExplanationError) as error:
+        fc.validate_plan(generated,payload)
+    assert error.value.validation_rule=='document_evidence'
+
+
+def test_health_general_information_does_not_relax_medication_rules():
+    payload=fc.build_facts(MEDS)
+    generated=plan(payload)
+    generated['summary'][0]['text']=SAFE_CONTEXT_SENTENCES[2]
+    with pytest.raises(fc.ExplanationError):
+        fc.validate_plan(generated,payload)
+
+
+def test_contextual_gateway_response_reaches_report_and_conceptual_quiz_without_live_api(monkeypatch):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from carebridge.domain import normalize
+    from carebridge.records import record
+    from carebridge.health_safety import AI_NOTICE
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    transport=Mock()
+    transport.post.return_value=response(payload,choices=[{'finish_reason':'stop','message':{'content':json.dumps(generated,ensure_ascii=False)}}])
+    monkeypatch.setattr(fc.requests,'Session',lambda:transport)
+    kind,clean=normalize(HEALTH)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
+    app.sidebar.radio[0].set_value('건강검진').run()
+    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
+    assert transport.post.call_count==0
+    next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
+    assert not app.exception and not app.warning
+    assert any(all(text in m.value for text in SAFE_CONTEXT_SENTENCES) for m in app.markdown)
+    assert any('일반 건강정보: '+SAFE_CONTEXT_SENTENCES[2] in m.value for m in app.markdown)
+    assert any(c.value==AI_NOTICE for c in app.caption)
+    headings=[m.value for m in app.markdown if m.value.startswith('### ')]
+    assert headings==['### AI 건강검진 리포트','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
+    questions=[r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))]
+    assert 2<=len(questions)<=3
+    bank={q['id']:q for q in payload['understanding_questions']}
+    first=bank[generated['quiz'][0]['question_id']]
+    questions[0].set_value(first['answer']).run()
+    assert any(c.value=='정답입니다.' for c in app.caption)
+    app.sidebar.radio[0].set_value('대시보드').run()
+    app.sidebar.radio[0].set_value('건강검진').run()
+    assert not app.exception and transport.post.call_count==1
+    assert any(c.value=='정답입니다.' for c in app.caption)
+    assert app.session_state['records'][0]['data']==clean
+
+
+@pytest.mark.parametrize('sentence',[
+    '균형 잡힌 식단은 일반적인 건강관리에 도움이 될 수 있습니다.',
+    '일반적인 건강관리를 위해 꾸준한 신체활동을 권장합니다.',
+    '이 검진 결과만으로 약물 변경을 지시하는 것이 아닙니다.',
+    '이 검진 결과만으로 약을 변경할 수 없습니다.',
+])
+def test_health_general_context_is_not_an_exact_sentence_allowlist(sentence):
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][1]['text']=sentence
+    assert fc.validate_plan(generated,payload)
+
+
+@pytest.mark.parametrize('sentence',[
+    '당신에게 일반적인 건강관리를 위해 걷기 시간을 늘리라고 정해 드립니다.',
+    '일반적인 건강관리를 위해 운동을 108분 하세요.',
+    '이 결과만으로 약을 변경할 수 없지만 지금부터 중단하세요.',
+])
+def test_general_or_negative_context_does_not_shield_personal_prescriptions(sentence):
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][1]['text']=sentence
+    with pytest.raises(fc.ExplanationError):
+        fc.validate_plan(generated,payload)
+
+
+def test_measurement_label_does_not_allow_borrowing_a_reference_number():
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][1]['text']='공복혈당은 100mg/dL입니다.'
+    with pytest.raises(fc.ExplanationError) as error:
+        fc.validate_plan(generated,payload)
+    assert error.value.validation_rule=='document_result_value'
+
+
+def test_patient_specific_diagnosis_check_is_not_limited_to_a_diabetes_keyword():
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][1]['text']='당신은 빈혈이 확실합니다.'
+    with pytest.raises(fc.ExplanationError) as error:
+        fc.validate_plan(generated,payload)
+    assert error.value.validation_rule=='document_medical_claim'
+
+
+@pytest.mark.parametrize('name,value,unit,reference',[
+    ('혈색소','15.1','g/dL','남 13-16.5 여 12-15.5'),
+    ('신장 검사','90','mL/min/1.73m²','60이상'),
+    ('추가 검사','-0.4','mmol/L','-1~1'),
+])
+def test_valid_units_and_decimal_reference_ranges_are_not_false_positives(name,value,unit,reference):
+    raw={'examinee_sex':'남성','health_checkup_results':[{'test_item_name':name,'result_value':value,'result_unit':unit,'reference_range':reference}]}
+    payload=fc.build_facts(raw)
+    generated=plan(payload)
+    assert fc.validate_plan(generated,payload)
+    generated['details'][0]['text']+=' '+name+' 측정값 '+value+unit+'을 확인해 주세요.'
+    assert fc.validate_plan(generated,payload)
+
+
+@pytest.mark.parametrize('sentence',[
+    '당신은 당뇨병이 확실합니다.',
+    '복용 중인 약을 지금부터 중단하세요.',
+    '원문에 없는 복용량으로 변경해서 복용하세요.',
+])
+def test_unsafe_mock_gateway_content_keeps_rule_screen_without_recall(monkeypatch,sentence):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from carebridge.domain import normalize
+    from carebridge.records import record
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][1]['text']=sentence
+    transport=Mock()
+    transport.post.return_value=response(payload,choices=[{'finish_reason':'stop','message':{'content':json.dumps(generated,ensure_ascii=False)}}])
+    monkeypatch.setattr(fc.requests,'Session',lambda:transport)
+    kind,clean=normalize(HEALTH)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
+    app.sidebar.radio[0].set_value('건강검진').run()
+    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
+    next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
+    app.run()
+    assert not app.exception
+    assert any('document_medical_claim' in w.value for w in app.warning)
+    assert not any('### AI 건강검진 리포트'==m.value for m in app.markdown)
+    assert any('<table aria-label="건강검진 결과"' in m.value for m in app.markdown)
+    assert transport.post.call_count==1
+    assert app.session_state['records'][0]['data']==clean
+
+
+def test_safe_report_does_not_depend_on_an_exact_generated_disclaimer():
+    payload=fc.build_facts(HEALTH)
+    generated=contextual_report(payload)
+    generated['summary'][0]['text']='검진표의 주의 항목과 참고기준을 함께 살펴보는 안내입니다.'
+    assert fc.validate_plan(generated,payload)
+    generated['summary'][0]['text']='개인별 치료를 받아야 합니다.'
+    with pytest.raises(fc.ExplanationError) as error:
+        fc.validate_plan(generated,payload)
+    assert error.value.validation_rule=='document_medical_claim'

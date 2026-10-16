@@ -10,20 +10,13 @@ LIFESTYLE = {
 
 LIMIT = '검진 결과와 문서 기준의 비교만으로 특정 질병이나 개인별 치료 방법을 확정할 수는 없습니다.'
 
-# Only these complete, pre-reviewed non-diagnostic notices are allowed in prose.
-# This is not a keyword exception and never includes lifestyle prescriptions.
+# Examples retained for tests and documentation; health validation is contextual.
 REPORT_NOTICES = (
     LIMIT,
     '이 결과만으로 특정 질병을 진단할 수 없습니다.',
     '이 수치만으로 특정 질병을 진단할 수는 없습니다.',
     '검진 결과만으로 질병을 진단하거나 치료 방법을 정할 수는 없습니다.',
 )
-
-
-def strip_reviewed_notices(text):
-    import re
-    sentences = re.split(r'(?<=[.!?])\s+|\n+', text.strip())
-    return ' '.join(sentence for sentence in sentences if sentence.strip() not in REPORT_NOTICES)
 
 
 def question_bank(facts):

@@ -5,6 +5,7 @@ from .factchat import (configuration, build_facts, fingerprint, generate_once,
 from .explanation_content import question, quiz_options
 from .ui import lines
 from .health_report import LIFESTYLE
+from .health_safety import AI_NOTICE, text_kind
 
 
 def easy_explanation(record):
@@ -63,15 +64,15 @@ def easy_explanation(record):
         return entry
     st.markdown('### AI가 풀어쓴 문서 설명')
     st.caption('FactChat 생성 설명 · 응답 수신 및 근거 검증 완료. 원문 추출값과 대조해 읽어 주세요.')
+    st.caption(AI_NOTICE)
     plan = result['plan']
-    st.markdown('<div class="result-note">'+lines(' '.join(part['text'] for part in plan['summary']))+'</div>', unsafe_allow_html=True)
+    st.markdown('<div class="result-note">'+lines(' '.join(('일반 건강정보: ' if text_kind(part['text'])=='general_health' else '')+part['text'] for part in plan['summary']))+'</div>', unsafe_allow_html=True)
     with st.expander('전체 요약의 근거 확인'):
         show_evidence({'evidence': list(dict.fromkeys(fid for part in plan['summary'] for fid in part['evidence']))}, entry['payload'])
     for detail in plan['details']:
         st.markdown('<p>'+lines(detail['text'])+'</p>', unsafe_allow_html=True)
         with st.expander('이 설명의 근거 확인', expanded=False):
             show_evidence(detail, entry['payload'])
-    st.caption('AI 설명은 문서 이해를 돕기 위한 것입니다. 질병 진단이나 복약 변경 지시가 아니며, 내용이 다르면 원문을 우선 확인해 주세요.')
     return entry
 
 
@@ -130,8 +131,9 @@ def health_report(entry):
     plan = entry['result']['plan']
     st.markdown('### AI 건강검진 리포트')
     st.caption('AI 참고 설명 · 검진표에 근거한 FactChat 핵심 요약')
-    st.markdown('#### 이번 건강검진 한눈에 보기')
-    st.markdown('<div class="result-note">'+lines(' '.join(part['text'] for part in plan['summary']))+'</div>', unsafe_allow_html=True)
+    st.caption(AI_NOTICE)
+    st.markdown('#### AI 핵심 요약')
+    st.markdown('<div class="result-note">'+lines(' '.join(('일반 건강정보: ' if text_kind(part['text'])=='general_health' else '')+part['text'] for part in plan['summary']))+'</div>', unsafe_allow_html=True)
     st.markdown('### 생활 속 건강관리 가이드')
     st.caption('검진표 원문이 아닌 일반 건강정보입니다. 개인별 치료 권고가 아닙니다.')
     with st.container(border=True):

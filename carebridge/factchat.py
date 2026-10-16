@@ -83,7 +83,8 @@ def build_facts(data):
             attention = True
         for field, value in fields:
             value = _sanitize(value, names)
-            if not value or missing(value):
+            negative_measurement = health and field in ('result','reference') and bool(re.match(r'^-\d',value))
+            if not value or (missing(value) and not negative_measurement):
                 continue
             uncertain = bool(re.search(r'OCR|불확실|불명확|판독|인식 오류|\?', value, re.I))
             facts.append({'id': f'{i}:{field}', 'item': name, 'field': field, 'value': value,
