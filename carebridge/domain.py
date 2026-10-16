@@ -1,5 +1,4 @@
 """Schema adapters and conservative, non-clinical document rules."""
-import copy
 import json
 import re
 from datetime import datetime, timedelta
@@ -7,6 +6,32 @@ from .client import AnalysisError, ROOT
 
 SCHEMAS = {s['json_schema']['name']:s['json_schema']['schema'] for s in json.loads((ROOT/'carebridge.json').read_text())['workflowConfig']['informationExtractConfiguration']['schemas']}
 GROUPS = {'health_checkup_result':'health_checkup_results','medication_guidance_record':'medication_instructions'}
+
+def classify_job(job):
+    """Read the actual document-classify step, never infer from Extract or filename."""
+    steps=[step for step in (job.get('output') or []) if isinstance(step,dict) and step.get('step_type')=='document-classify']
+    if len(steps)!=1 or steps[0].get('status')!='completed':
+        return None
+    parts=[part for part in (steps[0].get('content') or []) if isinstance(part,dict) and part.get('type')=='output_text']
+    if len(parts)!=1 or not isinstance(parts[0].get('text'),str):
+        return None
+    text=parts[0]['text'].strip()
+    try:
+        value=json.loads(text)
+    except ValueError:
+        value=text
+    return value if isinstance(value,str) and value in GROUPS else None
+
+def analysis_record_data(job):
+    classification=classify_job(job)
+    try:
+        kind,data=parse_job(job)
+    except AnalysisError:
+        if classification:
+            raise AnalysisError('Agent 작업은 완료됐지만 추출 결과가 없거나 형식이 올바르지 않습니다. Studio에서 기존 작업의 Extract 결과를 확인해 주세요.') from None
+        # Unsupported/unclassified documents still get an explicit review screen.
+        kind,data=classification or 'unclassified',{}
+    return kind,data,classification
 
 def normalize(data):
     if not isinstance(data, dict):
@@ -38,12 +63,25 @@ def normalize(data):
             if value is not None and not isinstance(value, str):
                 raise AnalysisError('문서 메타데이터 형식이 올바르지 않습니다.')
             clean[key] = value or ''
+    if kind=='health_checkup_result':
+        # Optional explicit metadata only; do not infer sex from names or reference labels.
+        for field in ('examinee_sex','sex','gender'):
+            if field in data and isinstance(data[field],str): clean[field]=data[field]
     return kind, clean
 
 def parse_job(job):
     candidates = []
-    for step in job.get('output', []):
-        for part in step.get('content', []):
+    output=job.get('output')
+    if not isinstance(output,list):
+        raise AnalysisError('Agent 응답에 추출 결과 목록이 없습니다.')
+    for step in output:
+        if not isinstance(step,dict) or step.get('status') in ('queued','in_progress','failed','cancelled'):
+            continue
+        content=step.get('content')
+        if not isinstance(content,list):
+            continue
+        for part in content:
+            if not isinstance(part,dict): continue
             if part.get('type') == 'output_text':
                 try:
                     value = json.loads(part.get('text',''))
@@ -62,33 +100,19 @@ def positive_int(value, suffix=''):
     m = re.fullmatch(r'\s*([1-9]\d*)\s*'+suffix+r'\s*',str(value))
     return int(m[1]) if m else None
 
-def range_status(row):
-    value = row.get('result_value','').strip()
-    ref = row.get('reference_range','').strip()
-    unit = row.get('result_unit','').strip()
-    if unit and ref.endswith(unit): ref = ref[:-len(unit)].strip()
-    num = r'(-?\d+(?:\.\d+)?)'
-    if not re.fullmatch(num,value): return '비교 불가'
-    v = float(value)
-    m = re.fullmatch(num+r'\s*[-~–〜]\s*'+num,ref)
-    if m:
-        lo,hi = map(float,m.groups())
-        if lo > hi: return '비교 불가'
-        return '문서 범위 미만' if v < lo else '문서 범위 초과' if v > hi else '문서 범위 내'
-    m = re.fullmatch(r'(<=|>=|<|>|≤|≥)\s*'+num,ref)
-    if m:
-        op,n=m.groups();n=float(n)
-        ok={'<':v<n,'>':v>n,'<=':v<=n,'>=':v>=n,'≤':v<=n,'≥':v>=n}[op]
-        return '문서 범위 내' if ok else '문서 범위 밖'
-    return '비교 불가'
+def range_status(row,sex=None):
+    from .health import assess
+    return assess(row,sex).text
 
 def medication_issues(row):
     issues=[]
-    for field,label in [('single_dose','1회량'),('administration_timing','복용 시점'),('source_excerpt','원문 근거')]:
+    for field,label in [('medication_name','약품명'),('single_dose','1회량'),('administration_timing','복용 시점'),('source_excerpt','원문 근거')]:
         if missing(row.get(field,'')): issues.append(label+' 확인 필요')
-    if not positive_int(row.get('times_per_day',''),r'(?:회)?'): issues.append('하루 횟수 확인 필요')
+    if not positive_int(row.get('times_per_day',''),r'(?:회)?'): issues.append('원문 횟수 확인 필요')
+    else: issues.append('횟수가 하루 기준인지 확인 필요')
     if not positive_int(row.get('days_of_administration',''),r'(?:일)?'): issues.append('복용 일수 확인 필요')
     combined=' '.join(row.values())
+    if re.search(r'OCR|불확실|불명확|판독|인식 오류|\?',combined,re.I): issues.append('추출 정확도 확인 필요')
     if re.search('필요시|필요 시|상충|모순|충돌|전문가에게 확인',combined): issues.append('복약 지시 확인 필요')
     return issues
 

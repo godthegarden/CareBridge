@@ -2,11 +2,11 @@
 import json
 import uuid
 from datetime import datetime, timezone
-from .domain import normalize
+from .domain import normalize, GROUPS
 from .client import AnalysisError
 
-def record(kind,data,filename,job_id):
-    return {'id':uuid.uuid4().hex,'kind':kind,'data':data,'filename':filename,'job_id':job_id,'created_at':datetime.now(timezone.utc).isoformat(),'origin':'실제 Agent 분석'}
+def record(kind,data,filename,job_id,classification=None):
+    return {'id':uuid.uuid4().hex,'kind':kind,'classification':classification if classification in GROUPS else None,'data':data,'filename':filename,'job_id':job_id,'created_at':datetime.now(timezone.utc).isoformat(),'origin':'실제 Agent 분석'}
 
 def export_records(records):
     return json.dumps({'version':1,'records':records},ensure_ascii=False,indent=2)
@@ -18,9 +18,12 @@ def import_records(raw):
         if bundle.get('version')!=1 or not isinstance(bundle.get('records'),list) or len(bundle['records'])>100: raise ValueError()
         records=[]
         for r in bundle['records']:
-            kind,data=normalize(r['data'])
+            if r['data']=={}:
+                kind,data=(r.get('classification') if r.get('classification') in GROUPS else 'unclassified'),{}
+            else:
+                kind,data=normalize(r['data'])
             # Imported files are untrusted, even if they claim to be Agent outputs.
-            item=record(kind,data,str(r.get('filename','가져온 기록'))[:200],'')
+            item=record(kind,data,str(r.get('filename','가져온 기록'))[:200],'',r.get('classification'))
             item['origin']='가져온 기록 · API 재검증 안 됨'
             records.append(item)
         return records
