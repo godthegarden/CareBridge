@@ -540,13 +540,13 @@ def test_health_report_is_short_and_lifestyle_only_uses_reviewed_templates():
     assert generated['summary'][-1]['text']==LIMIT
     assert 2 <= len(generated['lifestyle']) <= 3
     assert all(key in LIFESTYLE for key in generated['lifestyle'])
-    for invalid in [['food','treatment'], ['food']*2, ['food'], [{'text':'약을 늘리세요'}]]:
+    for invalid in [['food','activity','sleep'], ['food','treatment'], ['food']*2, ['food'], [{'text':'약을 늘리세요'}]]:
         bad = deepcopy(generated)
         bad['lifestyle'] = invalid
         with pytest.raises(fc.ExplanationError):
             fc.validate_plan(bad, payload)
     bad = deepcopy(generated)
-    bad['summary'][0]['text'] = '문서의 항목을 함께 확인해 볼 필요가 있습니다. '*15
+    bad['summary'][0]['text'] = '문서의 항목을 함께 확인해 볼 필요가 있습니다. '*30
     with pytest.raises(fc.ExplanationError):
         fc.validate_plan(bad, payload)
 
@@ -659,7 +659,7 @@ def test_lifestyle_and_document_prose_are_validated_as_separate_authorities():
     from carebridge.health_report import LIFESTYLE
     payload = fc.build_facts(HEALTH)
     generated = plan(payload)
-    generated['lifestyle'] = ['food','activity','sleep']
+    generated['lifestyle'] = ['food','activity']
     assert fc.validate_plan(generated, payload)
     # Reviewed general information is allowed; personal lifestyle prescriptions are not.
     reviewed = deepcopy(generated)
@@ -1253,3 +1253,99 @@ def test_named_document_normality_is_not_whole_person_clinical_certainty():
     for text in ['공복혈당은 정상입니다.','공복혈당의 문서 기준을 보면 당신은 정상입니다.','공복혈당은 비정상입니다.']:
         generated['summary'][0]['text']=text
         with pytest.raises(fc.ExplanationError): fc.validate_plan(generated,payload)
+
+
+def summary_variant(generated,variant):
+    result=deepcopy(generated)
+    parts=result['summary']
+    ids=list(dict.fromkeys(fid for part in parts for fid in part['evidence']))
+    if variant=='one_block':
+        result['summary']=[{'text':' '.join(p['text'] for p in parts),'evidence':ids}]
+    elif variant=='no_periods':
+        result['summary']=[{'text':p['text'].rstrip('.!?'),'evidence':p['evidence']} for p in parts]
+    elif variant=='unpunctuated':
+        result['summary']=[{'text':' '.join(p['text'].rstrip('.!?') for p in parts),'evidence':ids}]
+    elif variant=='paragraph':
+        result['summary']=[{'text':'\n'.join(p['text'].rstrip('.!?') for p in parts),'evidence':ids}]
+    elif variant=='two_blocks':
+        result['summary']=[{'text':' '.join(p['text'] for p in parts[:2]),'evidence':ids},parts[2]]
+    return result
+
+
+@pytest.mark.parametrize('variant',['original','one_block','no_periods','unpunctuated','paragraph','two_blocks'])
+def test_flexible_summary_reaches_streamlit_without_punctuation_contract(monkeypatch,variant):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from carebridge.domain import normalize
+    from carebridge.records import record
+    from carebridge.health_report import LIFESTYLE
+    from carebridge.health_safety import AI_NOTICE
+    payload=fc.build_facts(HEALTH)
+    original=natural_report(payload)
+    generated=summary_variant(original,variant)
+    assert fc.validate_plan(generated,payload)==generated
+    transport=Mock()
+    transport.post.return_value=response(payload,choices=[{'finish_reason':'stop','message':{'content':json.dumps(generated,ensure_ascii=False)}}])
+    monkeypatch.setattr(fc.requests,'Session',lambda:transport)
+    kind,clean=normalize(HEALTH)
+    snapshot=deepcopy(clean)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
+    app.sidebar.radio[0].set_value('건강검진').run()
+    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
+    assert transport.post.call_count==0
+    next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
+    assert not app.exception and not app.warning
+    body='\n'.join(m.value for m in app.markdown)
+    assert all(part['text'].rstrip('.!?') in body for part in original['summary'])
+    assert any(c.value==AI_NOTICE for c in app.caption)
+    for guide in LIFESTYLE.values():
+        assert guide['text'] in body and guide['url'] in body
+    assert [m.value for m in app.markdown if m.value.startswith('### ')]==[
+        '### AI 건강검진 리포트','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
+    assert len([r for r in app.radio if r.label.startswith(('1. ','2. ','3. '))])>=2
+    app.run()
+    assert transport.post.call_count==1 and app.session_state['records'][0]['data']==snapshot
+
+
+@pytest.mark.parametrize('danger,rule',[
+    ('공복혈당 측정값은 999mg/dL입니다.','document_number'),
+    ('공복혈당 측정값은 108g/dL입니다.','document_quantity'),
+    ('공복혈당 참고기준은 100이상입니다.','document_reference_condition'),
+    ('당신은 당뇨병이 확실합니다.','document_medical_claim'),
+    ('복용 중인 약을 지금부터 중단하세요.','document_medical_claim'),
+])
+def test_multisentence_summary_does_not_bypass_grounding_or_safety(danger,rule):
+    payload=fc.build_facts(HEALTH)
+    generated=summary_variant(natural_report(payload),'one_block')
+    generated['summary'][0]['text']+=' '+danger
+    with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
+    assert error.value.validation_rule==rule
+
+
+def test_summary_evidence_and_length_still_required_without_sentence_count():
+    payload=fc.build_facts(HEALTH)
+    generated=summary_variant(natural_report(payload),'one_block')
+    for ids in [[],['invented-id']]:
+        generated['summary'][0]['evidence']=ids
+        with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
+        assert error.value.validation_rule=='document_evidence'
+    generated=summary_variant(natural_report(payload),'one_block')
+    generated['summary'][0]['text']='문서의 항목을 함께 확인해 볼 필요가 있습니다. '*30
+    with pytest.raises(fc.ExplanationError,match='너무 깁니다'): fc.validate_plan(generated,payload)
+
+
+def test_who_templates_and_schema_are_static_and_match_summary_contract():
+    from carebridge.output_contract import response_format
+    from carebridge.health_report import LIFESTYLE
+    assert {g['url'] for g in LIFESTYLE.values()}=={
+        'https://www.who.int/en/news-room/fact-sheets/detail/healthy-diet',
+        'https://www.who.int/europe/news-room/fact-sheets/item/physical-activity'}
+    schema=response_format(fc.build_facts(HEALTH))['json_schema']['schema']['properties']
+    assert schema['summary']['minItems']==1 and schema['summary']['maxItems']==5
+    assert set(schema['lifestyle']['items']['enum'])==set(LIFESTYLE)
+    assert schema['lifestyle']['maxItems']==2
+    # Health flexibility never changes the medication output or safety contract.
+    med=response_format(fc.build_facts(MEDS))['json_schema']['schema']['properties']
+    assert med['summary']['minItems']==2 and med['summary']['maxItems']==3

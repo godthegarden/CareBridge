@@ -135,12 +135,13 @@ def health_report(entry):
     st.markdown('#### AI 핵심 요약')
     st.markdown('<div class="result-note">'+lines(' '.join(('일반 건강정보: ' if text_kind(part['text'])=='general_health' else '')+part['text'] for part in plan['summary']))+'</div>', unsafe_allow_html=True)
     st.markdown('### 생활 속 건강관리 가이드')
-    st.caption('검진표 원문이 아닌 일반 건강정보입니다. 개인별 치료 권고가 아닙니다.')
+    st.caption('검진표 원문이 아닌 일반 건강정보입니다. WHO 공식 자료를 바탕으로 정리했으며, WHO가 사용자 개인에게 제공한 권고가 아닙니다.')
     with st.container(border=True):
         for key in plan['lifestyle']:
             guide = LIFESTYLE[key]
             st.markdown('**'+guide['title']+'**')
             st.markdown('<p>'+lines(guide['text'])+'</p>', unsafe_allow_html=True)
+            st.markdown('[WHO 공식 출처 · '+guide['title']+']('+guide['url']+')')
     st.caption('궁금한 점이나 서로 다른 판정이 있다면 원문을 의료전문가와 함께 확인해 보세요.')
     with st.expander('항목별 AI 설명 · 요약 근거', expanded=False):
         for part in plan['summary']:
@@ -148,10 +149,6 @@ def health_report(entry):
         for detail in plan['details']:
             st.markdown('<p>'+lines(detail['text'])+'</p>', unsafe_allow_html=True)
             show_evidence(detail, entry['payload'])
-    with st.expander('일반 건강정보 출처', expanded=False):
-        for key in plan['lifestyle']:
-            guide = LIFESTYLE[key]
-            st.markdown('['+guide['title']+' · WHO/CDC]('+guide['url']+')')
 
 
 def health_comprehension(record, entry):

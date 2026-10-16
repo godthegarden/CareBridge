@@ -57,8 +57,10 @@ HEALTH_SYSTEM = """
 문서가 명확하게 보여주는 주의·이상 항목과 참고기준의 관계를 중심으로 설명한다.
 문서의 정상 표기와 수치가 충돌할 수 있다. conflict=true나 level=unknown은 확인 필요로 다룬다.
 문서 기준 충족을 의학적 정상 확정으로 바꾸지 않는다. 새로운 수치나 복용 지시를 만들지 않는다.
-모든 text에는 실제 facts의 ID로 된 evidence가 필요하다. 한 문장에 필요한 근거만 선택하라.
-summary: 전체 핵심을 3~5문장, 문장당 최대 220자·합계 최대 650자로 구성한다.
+모든 text에는 실제 facts의 ID로 된 evidence가 필요하다. 설명에 사용한 근거만 선택하라.
+summary: 전체 핵심을 3~5문장 분량, 합계 최대 650자로 간결하게 작성한다.
+summary는 text/evidence 객체 1~5개의 배열이다. 하나의 text에 전체 요약을 넣어도 된다.
+각 text의 문장 수나 마침표 수를 맞추려고 내용을 나누거나 반복하지 마라.
 검사항목을 하나씩 나열하지 말고 주의·이상·기준 차이와 확인 필요를 묶어 설명한다.
 원문 판정과 계산의 충돌은 앱에서 '확인 필요'로 표시한다. 설명에서 이를 다룰 때 어느 쪽도 확정하지 않는다.
 진단·처방을 대신하지 않는다는 안내는 앱에서 고정 표시한다. 요약에도 필요하면 다음과 같은 한계를 자연스럽게 설명하라: """ + LIMIT + """
@@ -68,14 +70,14 @@ details: 선택한 항목만 최대 8개, 기본 화면에서는 접혀 표시�
 comparison의 level/conflict/direction은 설명의 일관성을 확인하기 위한 구조화된 정보다.
 comparison 문구를 복사할 필요는 없다. 자연스럽게 바꾸어 설명하되 판정을 뒤집지 마라.
 항목명을 명확히 밝히고, 판정 불가 항목의 높고 낮음을 추측하지 마라.
-생활습관은 자유 문장을 생성하지 말고 lifestyle에 food/activity/sleep 중 2~3개 ID만 선택하라.
-food=균형 잡힌 식습관, activity=몸 상태에 맞춘 일상 신체활동, sleep=일정한 수면 습관이다.
+생활습관은 자유 문장이나 출처를 생성하지 말고 lifestyle에 food/activity 두 ID를 반환하라.
+food=균형 잡힌 식습관, activity=몸 상태에 맞춘 일상 신체활동이다. 앱이 WHO 공식 자료 기반의 고정 문구와 실제 출처를 표시한다.
 이는 검진표 원문이 아닌 일반 건강정보다. 개인별 치료나 질병별 처방을 만들지 않는다.
 일반 건강정보와 개인별 처방을 구분하라. 일반적인 식습관·신체활동의 의미는 설명할 수 있으나 개인별 목표·치료를 생성하지 마라. lifestyle에는 사전 검증된 가이드 ID만 반환하라.
 quiz: understanding_questions에 제공된 검증된 question_id만 2~3개 선택한다.
 측정값이나 기준 숫자를 암기하는 문항은 금지한다. relationship 하나와 meaning 또는 limits 하나를 포함하라.
 검증된 문제가 두 개 미만이면 빈 배열. 문제·보기·정답·해설은 앱의 검증된 문구 그대로 사용한다.
-반환 형식은 반드시 {"summary":[{"text":"한 문장.","evidence":["ID"]}],
+반환 형식은 반드시 {"summary":[{"text":"전체 핵심 요약(여러 문장 가능).","evidence":["ID"]}],
 "details":[{"text":"상세 설명.","evidence":["ID"]}],
 "lifestyle":["food","activity"],"quiz":[{"question_id":"제공된 ID"}]} 이다.
 """
@@ -117,9 +119,9 @@ def validate_content(plan, payload, error_type):
     expected = {'summary', 'details', 'quiz', 'lifestyle'} if report else {'summary', 'details', 'quiz'}
     if not isinstance(plan, dict) or set(plan) != expected:
         fail('새 설명 형식이 아니거나 설명 문장이 없습니다.', 'response_schema')
-    low, high = (3, 5) if report else (2, 3)
+    low, high = (1, 5) if report else (2, 3)
     if not isinstance(plan['summary'], list) or not low <= len(plan['summary']) <= high:
-        fail(f'전체 요약은 {low}~{high}문장이 필요합니다.')
+        fail(f'근거를 포함한 요약 블록 {low}~{high}개가 필요합니다.')
     if not isinstance(plan['details'], list) or not (0 if report else 1) <= len(plan['details']) <= (8 if report else 60):
         fail('항목별 설명 형식을 확인할 수 없습니다.')
 
@@ -169,11 +171,11 @@ def validate_content(plan, payload, error_type):
         for index, value in enumerate(plan[section]):
             context.update(section=section,index=index)
             block(value)
-            if section == 'summary' and len(re.findall(r'[.!?](?=\s|$)', value['text'].strip())) != 1:
+            if not report and section == 'summary' and len(re.findall(r'[.!?](?=\s|$)', value['text'].strip())) != 1:
                 fail('전체 요약의 각 문장은 한 문장이어야 합니다.')
     context.update(section='summary',index=-1)
     if report:
-        if sum(len(part['text']) for part in plan['summary']) > 650 or any(len(part['text']) > 220 for part in plan['summary']):
+        if sum(len(part['text']) for part in plan['summary']) > 650:
             fail('핵심 요약이 너무 깁니다.')
         # The UI always displays the reviewed diagnostic/prescription disclaimer.
         # Safe prose must not fail because its disclaimer differs or is omitted.

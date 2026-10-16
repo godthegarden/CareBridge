@@ -1,11 +1,9 @@
 """Reviewed general information and document-grounded comprehension candidates."""
 LIFESTYLE = {
     'food': {'title': '식습관', 'text': '설탕이 많이 든 음료와 과도한 포화지방 섭취를 줄이고, 채소·통곡물 등 다양한 식품을 균형 있게 먹는 습관을 실천해 보세요.',
-             'url': 'https://www.who.int/news-room/fact-sheets/detail/healthy-diet'},
+             'url': 'https://www.who.int/en/news-room/fact-sheets/detail/healthy-diet'},
     'activity': {'title': '신체활동', 'text': '자신의 몸 상태에 맞춰 걷기 등 일상에서 할 수 있는 신체활동을 꾸준히 이어가 보세요.',
-                 'url': 'https://www.who.int/news-room/fact-sheets/detail/physical-activity'},
-    'sleep': {'title': '수면', 'text': '잠자리에 드는 시간과 일어나는 시간을 가능한 한 일정하게 유지해 보세요.',
-              'url': 'https://www.cdc.gov/sleep/about/'},
+                 'url': 'https://www.who.int/europe/news-room/fact-sheets/item/physical-activity'},
 }
 
 LIMIT = '검진 결과와 문서 기준의 비교만으로 특정 질병이나 개인별 치료 방법을 확정할 수는 없습니다.'
@@ -67,9 +65,9 @@ def question_bank(facts):
 
 def validate_report_selection(plan, payload, fail):
     lifestyle = plan['lifestyle']
-    if (not isinstance(lifestyle, list) or not 2 <= len(lifestyle) <= 3 or
+    if (not isinstance(lifestyle, list) or not 2 <= len(lifestyle) <= len(LIFESTYLE) or
             any(not isinstance(key, str) or key not in LIFESTYLE for key in lifestyle) or len(set(lifestyle)) != len(lifestyle)):
-        fail('생활습관 정보는 검증된 일반 건강정보 2~3개만 선택할 수 있습니다.', 'lifestyle_template_only')
+        fail('생활습관 정보는 검증된 WHO 일반 건강정보만 선택할 수 있습니다.', 'lifestyle_template_only')
     bank = {q['id']: q for q in payload['understanding_questions']}
     quiz = plan['quiz']
     if not isinstance(quiz, list) or (len(bank) >= 2 and len(quiz) not in (2, 3)) or (len(bank) < 2 and quiz):

@@ -124,7 +124,7 @@ def build_facts(data):
 
 
 def fingerprint(payload, model):
-    return hashlib.sha256(json.dumps([5 if payload.get('report_version') else 3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([6 if payload.get('report_version') else 3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def validate_plan(plan, payload):
