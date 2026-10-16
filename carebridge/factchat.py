@@ -118,13 +118,13 @@ def build_facts(data):
         raise ExplanationError('설명에 사용할 명확한 추출 항목이 없습니다. 원문을 먼저 확인해 주세요.')
     payload = {'kind': kind, 'facts': facts}
     if health:
-        payload['report_version'] = 1
+        payload['report_version'] = 2
         payload['understanding_questions'] = question_bank(facts)
     return payload
 
 
 def fingerprint(payload, model):
-    return hashlib.sha256(json.dumps([6 if payload.get('report_version') else 3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([7 if payload.get('report_version') else 3, model, payload], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
 def validate_plan(plan, payload):

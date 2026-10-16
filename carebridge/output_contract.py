@@ -1,6 +1,5 @@
 """Gateway structured-output contract matching the existing local response validator."""
 import os
-from .health_report import LIFESTYLE
 
 
 def response_format(payload):
@@ -21,9 +20,7 @@ def response_format(payload):
     if report:
         questions=[q['id'] for q in payload['understanding_questions']]
         quiz=obj({'question_id':{'type':'string','enum':questions or ['__no_question__']}})
-        schema=obj({'summary':arr(block,1,5),'details':arr(block,0,8),
-                    'lifestyle':arr({'type':'string','enum':list(LIFESTYLE)},2,len(LIFESTYLE)),
-                    'quiz':arr(quiz,2 if len(questions)>=2 else 0,3 if len(questions)>=2 else 0)})
+        schema=obj({'summary':arr(block,1,5),'quiz':arr(quiz,2 if len(questions)>=2 else 0,3 if len(questions)>=2 else 0)})
     else:
         eligible=[fact['id'] for fact in payload['facts'] if fact['quiz_allowed']]
         quiz=obj({'fact_id':{'type':'string','enum':eligible or ['__no_question__']},'explanation':block})

@@ -48,6 +48,9 @@ def easy_explanation(record):
                     entry = generate_once(cache, rid, record['data'], consent=consent)
     if not entry:
         return None
+    if entry['state'] == 'error' and payload.get('report_version'):
+        st.info('AI 설명을 생성하지 못해 기본 요약을 표시합니다')
+        return None
     if entry['state'] == 'error':
         st.warning('AI 설명 생성 실패 · '+entry['error'])
         st.caption('자동 재요청하지 않습니다. 아래는 AI 생성 설명이 아닌 추출값·규칙 기반 기본 안내이며 계속 사용할 수 있습니다.')
@@ -134,21 +137,22 @@ def health_report(entry):
     st.caption(AI_NOTICE)
     st.markdown('#### AI 핵심 요약')
     st.markdown('<div class="result-note">'+lines(' '.join(('일반 건강정보: ' if text_kind(part['text'])=='general_health' else '')+part['text'] for part in plan['summary']))+'</div>', unsafe_allow_html=True)
+    general_health_guide()
+    with st.expander('요약 근거', expanded=False):
+        for part in plan['summary']:
+            show_evidence(part, entry['payload'])
+
+
+def general_health_guide():
+    """Reviewed local WHO information is available even without AI generation."""
     st.markdown('### 생활 속 건강관리 가이드')
     st.caption('검진표 원문이 아닌 일반 건강정보입니다. WHO 공식 자료를 바탕으로 정리했으며, WHO가 사용자 개인에게 제공한 권고가 아닙니다.')
     with st.container(border=True):
-        for key in plan['lifestyle']:
-            guide = LIFESTYLE[key]
+        for guide in LIFESTYLE.values():
             st.markdown('**'+guide['title']+'**')
             st.markdown('<p>'+lines(guide['text'])+'</p>', unsafe_allow_html=True)
             st.markdown('[WHO 공식 출처 · '+guide['title']+']('+guide['url']+')')
     st.caption('궁금한 점이나 서로 다른 판정이 있다면 원문을 의료전문가와 함께 확인해 보세요.')
-    with st.expander('항목별 AI 설명 · 요약 근거', expanded=False):
-        for part in plan['summary']:
-            show_evidence(part, entry['payload'])
-        for detail in plan['details']:
-            st.markdown('<p>'+lines(detail['text'])+'</p>', unsafe_allow_html=True)
-            show_evidence(detail, entry['payload'])
 
 
 def health_comprehension(record, entry):

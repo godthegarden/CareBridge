@@ -64,10 +64,6 @@ def question_bank(facts):
 
 
 def validate_report_selection(plan, payload, fail):
-    lifestyle = plan['lifestyle']
-    if (not isinstance(lifestyle, list) or not 2 <= len(lifestyle) <= len(LIFESTYLE) or
-            any(not isinstance(key, str) or key not in LIFESTYLE for key in lifestyle) or len(set(lifestyle)) != len(lifestyle)):
-        fail('생활습관 정보는 검증된 WHO 일반 건강정보만 선택할 수 있습니다.', 'lifestyle_template_only')
     bank = {q['id']: q for q in payload['understanding_questions']}
     quiz = plan['quiz']
     if not isinstance(quiz, list) or (len(bank) >= 2 and len(quiz) not in (2, 3)) or (len(bank) < 2 and quiz):

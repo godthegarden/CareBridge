@@ -10,7 +10,7 @@ from carebridge.documents import original_type
 from carebridge.records import record, export_records, import_records
 from carebridge.ui import summary_html, table_html, lines, badge
 from carebridge.health import assess, document_sex, summarize, measurement_fields
-from carebridge.explanation_ui import easy_explanation, comprehension
+from carebridge.explanation_ui import easy_explanation, comprehension, general_health_guide
 from carebridge.medication_validation import field_errors, variable_schedule
 from carebridge.stage_review import stage_review
 
@@ -170,7 +170,9 @@ def health(r,report=False):
         st.markdown('<div class="result-note">'+lines(f'추출된 {counts["total"]}개 항목 중 문서 기준 충족 {normal}개, 주의·기준 미충족 {attention}개, 확인 필요 {unknown}개입니다.',
             '원문 판정을 우선합니다. 숫자 기준 충족은 의학적 정상 판정을 의미하지 않습니다.')+'</div>',unsafe_allow_html=True)
     st.markdown(summary_html([('검사항목 수',f'{counts["total"]}개'),('문서 기준 충족',f'{normal}개'),('기준 미충족',f'{attention}개'),('확인 필요',f'{unknown}개')]),unsafe_allow_html=True)
-    if not report: st.markdown('### 검사항목별 결과')
+    if not report:
+        general_health_guide()
+        st.markdown('### 검사항목별 결과')
     st.caption('검진일 · '+(r['data'].get('health_examination_date') or '미기재'))
     only_attention=draft_input(st.checkbox,'확인이 필요한 항목만 보기',r['id']+'health_filter',False)
     visible=[(i,row,assessment) for i,(row,assessment) in enumerate(zip(rows,assessments)) if not only_attention or assessment.level!='normal']

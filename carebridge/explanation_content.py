@@ -64,22 +64,16 @@ summary는 text/evidence 객체 1~5개의 배열이다. 하나의 text에 전체
 검사항목을 하나씩 나열하지 말고 주의·이상·기준 차이와 확인 필요를 묶어 설명한다.
 원문 판정과 계산의 충돌은 앱에서 '확인 필요'로 표시한다. 설명에서 이를 다룰 때 어느 쪽도 확정하지 않는다.
 진단·처방을 대신하지 않는다는 안내는 앱에서 고정 표시한다. 요약에도 필요하면 다음과 같은 한계를 자연스럽게 설명하라: """ + LIMIT + """
-details: 선택한 항목만 최대 8개, 기본 화면에서는 접혀 표시된다. 모든 용어를 나열할 필요 없다.
-각 상세 설명은 한 항목의 실제 설명에 사용한 근거 ID만 evidence에 포함하라.
-검사값·단위·참고기준·원문 판정·기준 충족 여부는 앱이 관리하고 표시한다.
-comparison의 level/conflict/direction은 설명의 일관성을 확인하기 위한 구조화된 정보다.
-comparison 문구를 복사할 필요는 없다. 자연스럽게 바꾸어 설명하되 판정을 뒤집지 마라.
-항목명을 명확히 밝히고, 판정 불가 항목의 높고 낮음을 추측하지 마라.
-생활습관은 자유 문장이나 출처를 생성하지 말고 lifestyle에 food/activity 두 ID를 반환하라.
-food=균형 잡힌 식습관, activity=몸 상태에 맞춘 일상 신체활동이다. 앱이 WHO 공식 자료 기반의 고정 문구와 실제 출처를 표시한다.
-이는 검진표 원문이 아닌 일반 건강정보다. 개인별 치료나 질병별 처방을 만들지 않는다.
-일반 건강정보와 개인별 처방을 구분하라. 일반적인 식습관·신체활동의 의미는 설명할 수 있으나 개인별 목표·치료를 생성하지 마라. lifestyle에는 사전 검증된 가이드 ID만 반환하라.
+검사값·단위·참고기준·원문 판정·비교 상태와 WHO 안내는 앱이 별도로 표시한다.
+항목별 장문 설명(details)이나 생활습관(lifestyle) 필드는 생성하지 마라.
+comparison의 level/conflict/direction과 실제 근거를 참고해 요약하되 문구를 복사할 필요는 없다.
+여러 검사항목을 함께 요약할 수 있으며 그 설명에 실제 사용한 근거 ID를 연결하라.
+판정 불가 항목의 높고 낮음을 추측하지 마라.
 quiz: understanding_questions에 제공된 검증된 question_id만 2~3개 선택한다.
 측정값이나 기준 숫자를 암기하는 문항은 금지한다. relationship 하나와 meaning 또는 limits 하나를 포함하라.
 검증된 문제가 두 개 미만이면 빈 배열. 문제·보기·정답·해설은 앱의 검증된 문구 그대로 사용한다.
 반환 형식은 반드시 {"summary":[{"text":"전체 핵심 요약(여러 문장 가능).","evidence":["ID"]}],
-"details":[{"text":"상세 설명.","evidence":["ID"]}],
-"lifestyle":["food","activity"],"quiz":[{"question_id":"제공된 ID"}]} 이다.
+"quiz":[{"question_id":"제공된 ID"}]} 이다.
 """
 
 
@@ -116,13 +110,13 @@ def validate_content(plan, payload, error_type):
         raise error
     facts = {f['id']: f for f in payload['facts']}
     report = bool(payload.get('report_version'))
-    expected = {'summary', 'details', 'quiz', 'lifestyle'} if report else {'summary', 'details', 'quiz'}
+    expected = {'summary', 'quiz'} if report else {'summary', 'details', 'quiz'}
     if not isinstance(plan, dict) or set(plan) != expected:
         fail('새 설명 형식이 아니거나 설명 문장이 없습니다.', 'response_schema')
     low, high = (1, 5) if report else (2, 3)
     if not isinstance(plan['summary'], list) or not low <= len(plan['summary']) <= high:
         fail(f'근거를 포함한 요약 블록 {low}~{high}개가 필요합니다.')
-    if not isinstance(plan['details'], list) or not (0 if report else 1) <= len(plan['details']) <= (8 if report else 60):
+    if not report and (not isinstance(plan['details'], list) or not 1 <= len(plan['details']) <= 60):
         fail('항목별 설명 형식을 확인할 수 없습니다.')
 
     medication = payload['kind'] == 'medication_guidance_record'
@@ -139,8 +133,12 @@ def validate_content(plan, payload, error_type):
             fail('문서와 대조할 수 없는 근거가 있습니다.', 'document_evidence')
         selected = [facts[i] for i in ids]
         corpus = ' '.join(f['item']+' '+f['value'] for f in selected)
-        for term in ('BMI', '체질량지수', '공복혈당', '콜레스테롤'):
-            if term in text.upper() and term not in corpus.upper():
+        terms = {'BMI', '체질량지수', '공복혈당', '콜레스테롤'}
+        if report:
+            terms.update(f['item'] for f in payload['facts']
+                         if re.search(re.escape(f['item'])+r'\s*(?:은|는|측정값|결과값|참고기준)',text))
+        for term in terms:
+            if term.upper() in text.upper() and term.upper() not in corpus.upper():
                 fail('근거에 없는 검사 용어가 포함되어 있습니다.', 'document_test_term')
         # Health quantities compare numeric values, not decimal spelling (108 == 108.0).
         # Medication retains its literal-dose contract independently.
@@ -167,7 +165,7 @@ def validate_content(plan, payload, error_type):
                     fail('복약 원문 밖의 설명이 포함되어 있습니다.', 'medication_vocabulary')
         return selected
 
-    for section in ('summary', 'details'):
+    for section in (('summary',) if report else ('summary', 'details')):
         for index, value in enumerate(plan[section]):
             context.update(section=section,index=index)
             block(value)
@@ -177,8 +175,11 @@ def validate_content(plan, payload, error_type):
     if report:
         if sum(len(part['text']) for part in plan['summary']) > 650:
             fail('핵심 요약이 너무 깁니다.')
-        # The UI always displays the reviewed diagnostic/prescription disclaimer.
-        # Safe prose must not fail because its disclaimer differs or is omitted.
+        def selection_fail(message, rule):
+            context.update(section='quiz',index=-1)
+            fail(message, rule)
+        validate_report_selection(plan, payload, selection_fail)
+        return plan
     covered = set()
     for index, detail in enumerate(plan['details']):
         context.update(section='details',index=index)
@@ -205,13 +206,6 @@ def validate_content(plan, payload, error_type):
     required_rows = {f['id'].split(':')[0] for f in facts.values() if medication or (not report and f['field'] == 'meaning')}
     if not required_rows <= covered:
         fail('필수 항목의 쉬운 설명이 누락되었습니다.')
-
-    if report:
-        def selection_fail(message, rule):
-            context.update(section='lifestyle' if rule=='lifestyle_template_only' else 'quiz',index=-1)
-            fail(message, rule)
-        validate_report_selection(plan, payload, selection_fail)
-        return plan
 
     quizzes = plan['quiz']
     available = {f['id'] for f in facts.values() if f['quiz_allowed']}

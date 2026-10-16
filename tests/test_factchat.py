@@ -68,7 +68,7 @@ def plan(payload):
             candidate = next((q for q in bank if q['theme']==theme), None)
             if candidate: selected.append({'question_id': candidate['id']})
         if len(selected)<2: selected=[]
-        return {'summary': summary, 'details': details, 'lifestyle': ['food','activity'], 'quiz': selected}
+        return {'summary': summary, 'quiz': selected}
     return {'summary': summary, 'details': details,
             'quiz': [{'fact_id': f['id'], 'explanation': {'text': f['item']+'의 '+fc.LABELS[f['field']]+'은 '+f['value']+'로 문서에 적혀 있습니다.',
                       'evidence': [f['id']]}} for f in eligible[:3]] if len(eligible)>=2 else []}
@@ -371,9 +371,8 @@ def test_real_response_text_is_preserved_not_replaced_by_templates(data):
     assert len(result['plan']['summary']) in ((3,4,5) if data is HEALTH else (2,3))
     assert transport.post.call_args.kwargs['json']['max_tokens'] == 4500
     if data is HEALTH:
-        prose = ' '.join(block['text'] for block in generated['details'])
-        assert '키에 비해 몸무게' in prose and '혈액 속 포도당' in prose
-        assert '100미만과 비교하면 문서 기준 초과' in prose
+        assert set(result['plan'])=={'summary','quiz'}
+
 
 
 @pytest.mark.parametrize('extra', [
@@ -382,7 +381,7 @@ def test_real_response_text_is_preserved_not_replaced_by_templates(data):
 def test_health_unsupported_number_diagnosis_or_advice_rejected(extra):
     payload = fc.build_facts(HEALTH)
     generated = plan(payload)
-    generated['details'][0]['text'] += extra
+    generated['summary'][0]['text'] += extra
     with pytest.raises(fc.ExplanationError, match='검증 실패'):
         fc.validate_plan(generated, payload)
 
@@ -418,7 +417,7 @@ def test_unknown_sex_comparison_cannot_be_invented():
     generated = plan(payload)
     assert fc.validate_plan(generated, payload)
     assert next(f for f in payload['facts'] if f['field']=='comparison')['value']=='확인 필요'
-    generated['details'][0]['text'] += ' 기준보다 높습니다.'
+    generated['summary'][0]['text'] += ' 기준보다 높습니다.'
     with pytest.raises(fc.ExplanationError, match='임의로 비교'):
         fc.validate_plan(generated, payload)
 
@@ -499,10 +498,10 @@ def test_http_success_but_invalid_content_shows_failure_not_ai_heading(monkeypat
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     app.run()
     assert not app.exception and transport.post.call_count==1
-    assert any('AI 설명 생성 실패' in w.value for w in app.warning)
+    assert any('AI 설명을 생성하지 못해 기본 요약을 표시합니다' in i.value for i in app.info)
     assert not any(m.value=='### AI가 풀어쓴 문서 설명' for m in app.markdown)
     assert any('<table aria-label="건강검진 결과"' in m.value for m in app.markdown)
-    assert any('AI 생성 설명이 아닌' in c.value for c in app.caption)
+    assert any('기본 문서 안내' in c.value for c in app.caption)
 
 
 def test_natural_medication_prose_is_accepted_with_original_values():
@@ -538,13 +537,8 @@ def test_health_report_is_short_and_lifestyle_only_uses_reviewed_templates():
     assert 3 <= len(generated['summary']) <= 5
     assert sum(len(p['text']) for p in generated['summary']) <= 650
     assert generated['summary'][-1]['text']==LIMIT
-    assert 2 <= len(generated['lifestyle']) <= 3
-    assert all(key in LIFESTYLE for key in generated['lifestyle'])
-    for invalid in [['food','activity','sleep'], ['food','treatment'], ['food']*2, ['food'], [{'text':'약을 늘리세요'}]]:
-        bad = deepcopy(generated)
-        bad['lifestyle'] = invalid
-        with pytest.raises(fc.ExplanationError):
-            fc.validate_plan(bad, payload)
+    assert set(generated)=={'summary','quiz'}
+    assert set(LIFESTYLE)=={'food','activity'}
     bad = deepcopy(generated)
     bad['summary'][0]['text'] = '문서의 항목을 함께 확인해 볼 필요가 있습니다. '*30
     with pytest.raises(fc.ExplanationError):
@@ -568,7 +562,7 @@ def test_health_understanding_questions_require_concepts_not_number_recall():
         fc.validate_plan(generated, payload)
 
 
-def test_report_conflicting_verdict_requires_review_in_summary_and_details():
+def test_report_conflicting_verdict_cannot_be_overridden_in_summary():
     data = {'health_checkup_results':[{'test_item_name':'공복혈당(mg/dL)','result_value':'108','reference_range':'100미만','remark':'정상'}]}
     payload = fc.build_facts(data)
     comparison = next(f for f in payload['facts'] if f['field']=='comparison')
@@ -581,7 +575,7 @@ def test_report_conflicting_verdict_requires_review_in_summary_and_details():
         fc.validate_plan(generated, payload)
 
 
-def test_health_report_screen_order_collapsed_details_and_immediate_feedback(monkeypatch):
+def test_health_report_screen_order_collapsed_evidence_and_immediate_feedback(monkeypatch):
     from pathlib import Path
     from streamlit.testing.v1 import AppTest
     from carebridge.domain import normalize
@@ -600,9 +594,10 @@ def test_health_report_screen_order_collapsed_details_and_immediate_feedback(mon
     assert not app.exception and fake.call_count==1
     headings=[m.value for m in app.markdown if m.value.startswith('### ')]
     assert headings==['### AI 건강검진 리포트','### 생활 속 건강관리 가이드','### 상세 검진 수치','### 문서 이해도 확인']
-    expander=next(e for e in app.expander if e.label=='항목별 AI 설명 · 요약 근거')
+    expander=next(e for e in app.expander if e.label=='요약 근거')
     assert not expander.proto.expanded
-    assert any(generated['details'][0]['text'] in m.value for m in expander.markdown)
+    assert expander.text
+    assert not any(e.label=='항목별 AI 설명 · 요약 근거' for e in app.expander)
     assert any('검진표 원문이 아닌 일반 건강정보' in c.value for c in app.caption)
     assert not any(b.label=='선택한 답 채점하기' for b in app.button)
     bank={q['id']:q for q in payload['understanding_questions']}
@@ -621,7 +616,7 @@ def test_reviewed_non_diagnostic_notice_does_not_trigger_medical_keyword_false_p
     generated = plan(payload)
     generated['summary'][-1]['text'] = notice
     assert fc.validate_plan(generated, payload) is generated
-    generated['details'][0]['text'] += ' '+notice
+    generated['summary'][0]['text'] += ' '+notice
     assert fc.validate_plan(generated, payload) is generated
 
 
@@ -633,11 +628,11 @@ def test_reviewed_notice_never_shields_an_extra_generated_medical_claim(claim):
     from carebridge.health_report import REPORT_NOTICES
     payload = fc.build_facts(HEALTH)
     generated = plan(payload)
-    generated['details'][0]['text'] += ' '+REPORT_NOTICES[1]+' '+claim
+    generated['summary'][0]['text'] += ' '+REPORT_NOTICES[1]+' '+claim
     with pytest.raises(fc.ExplanationError) as raised:
         fc.validate_plan(generated, payload)
     assert raised.value.validation_rule == ('document_comparison' if claim=='검사 결과는 정상입니다.' else 'document_medical_claim')
-    assert raised.value.validation_section == 'details'
+    assert raised.value.validation_section == 'summary'
     assert raised.value.validation_index == 0
 
 
@@ -659,7 +654,6 @@ def test_lifestyle_and_document_prose_are_validated_as_separate_authorities():
     from carebridge.health_report import LIFESTYLE
     payload = fc.build_facts(HEALTH)
     generated = plan(payload)
-    generated['lifestyle'] = ['food','activity']
     assert fc.validate_plan(generated, payload)
     # Reviewed general information is allowed; personal lifestyle prescriptions are not.
     reviewed = deepcopy(generated)
@@ -677,8 +671,8 @@ def test_lifestyle_and_document_prose_are_validated_as_separate_authorities():
         bad['lifestyle'] = value
         with pytest.raises(fc.ExplanationError) as raised:
             fc.validate_plan(bad, payload)
-        assert raised.value.validation_rule == 'lifestyle_template_only'
-        assert raised.value.validation_section == 'lifestyle'
+        assert raised.value.validation_rule == 'response_schema'
+        assert raised.value.validation_section == 'response'
 
 
 def test_api_json_decoding_is_separate_from_medical_validation():
@@ -898,7 +892,7 @@ def test_valid_units_and_decimal_reference_ranges_are_not_false_positives(name,v
     payload=fc.build_facts(raw)
     generated=plan(payload)
     assert fc.validate_plan(generated,payload)
-    generated['details'][0]['text']+=' '+name+' 측정값 '+value+unit+'을 확인해 주세요.'
+    generated['summary'][0]['text']+=' '+name+' 측정값 '+value+unit+'을 확인해 주세요.'
     assert fc.validate_plan(generated,payload)
 
 
@@ -927,7 +921,8 @@ def test_unsafe_mock_gateway_content_keeps_rule_screen_without_recall(monkeypatc
     next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
     app.run()
     assert not app.exception
-    assert any('document_medical_claim' in w.value for w in app.warning)
+    assert any('AI 설명을 생성하지 못해 기본 요약을 표시합니다' in i.value for i in app.info)
+    assert not app.warning
     assert not any('### AI 건강검진 리포트'==m.value for m in app.markdown)
     assert any('<table aria-label="건강검진 결과"' in m.value for m in app.markdown)
     assert transport.post.call_count==1
@@ -1070,22 +1065,17 @@ def natural_report(payload):
         {'text':'BMI는 문서에 과체중 구간으로 적혀 있어 몸무게와 키의 관계를 이해할 때 참고할 수 있습니다.', 'evidence':['0:result','0:reference']},
         {'text':'이 검진 결과만으로 특정 질환을 진단할 수는 없습니다.', 'evidence':['0:result','1:result']},
     ]
-    generated['details']=[
-        {'text':'공복혈당은 음식을 먹지 않은 상태에서 혈액 속 포도당의 양을 살펴보는 검사입니다.', 'evidence':['1:meaning']},
-        {'text':'BMI는 키에 비해 몸무게가 어느 정도인지 나타내는 지표로 이해하면 됩니다.', 'evidence':['0:meaning']},
-    ]
     return generated
 
 
-def test_scenario_a_paraphrased_summary_and_optional_definition_details_pass():
+def test_scenario_a_paraphrased_summary_only_passes():
     payload=fc.build_facts(HEALTH)
     generated=natural_report(payload)
     comparison_values=[f['value'] for f in payload['facts'] if f['field']=='comparison']
     assert '문서 기준 초과' in comparison_values
     assert '문서 기준 초과' not in str(generated)
     assert fc.validate_plan(generated,payload)==generated
-    generated['details']=[]  # The exact table is independent of optional prose details.
-    assert fc.validate_plan(generated,payload)
+    assert 'details' not in generated and 'lifestyle' not in generated
 
 
 @pytest.mark.parametrize('sentence',[
@@ -1125,7 +1115,7 @@ def test_scenario_c_invented_or_altered_quantities_rejected(sentence):
 def test_scenario_d_unsafe_assertions_not_excused_by_limitations(sentence):
     payload=fc.build_facts(HEALTH)
     generated=natural_report(payload)
-    generated['details'][0]['text']=sentence
+    generated['summary'][0]['text']=sentence
     with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
     assert error.value.validation_rule=='document_medical_claim'
 
@@ -1210,7 +1200,7 @@ def test_health_quantities_cannot_be_borrowed_from_another_cited_item():
 def test_unrelated_negative_words_do_not_negate_diagnoses_or_directives(sentence):
     payload=fc.build_facts(HEALTH)
     generated=natural_report(payload)
-    generated['details'][0]['text']=sentence
+    generated['summary'][0]['text']=sentence
     with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
     assert error.value.validation_rule=='document_medical_claim'
 
@@ -1344,8 +1334,89 @@ def test_who_templates_and_schema_are_static_and_match_summary_contract():
         'https://www.who.int/europe/news-room/fact-sheets/item/physical-activity'}
     schema=response_format(fc.build_facts(HEALTH))['json_schema']['schema']['properties']
     assert schema['summary']['minItems']==1 and schema['summary']['maxItems']==5
-    assert set(schema['lifestyle']['items']['enum'])==set(LIFESTYLE)
-    assert schema['lifestyle']['maxItems']==2
+    assert set(schema)=={'summary','quiz'}
     # Health flexibility never changes the medication output or safety contract.
     med=response_format(fc.build_facts(MEDS))['json_schema']['schema']['properties']
     assert med['summary']['minItems']==2 and med['summary']['maxItems']==3
+
+
+def test_summary_only_contract_round_trip_allows_multiple_document_items():
+    from carebridge.output_contract import response_format
+    from carebridge.explanation_content import HEALTH_SYSTEM
+    payload=fc.build_facts(HEALTH)
+    generated=summary_variant(natural_report(payload),'one_block')
+    parsed=fc.parse_generated_content(json.dumps(generated,ensure_ascii=False))
+    assert set(parsed)=={'summary','quiz'}
+    assert fc.validate_plan(parsed,payload)==generated
+    schema=response_format(payload)['json_schema']['schema']
+    assert set(schema['required'])==set(schema['properties'])=={'summary','quiz'}
+    assert schema['additionalProperties'] is False
+    assert '항목별 장문 설명(details)이나 생활습관(lifestyle) 필드는 생성하지 마라' in HEALTH_SYSTEM
+    assert len({fid.split(':')[0] for fid in generated['summary'][0]['evidence']})==2
+    # A legacy details block is not requested or silently rendered as health output.
+    invalid=deepcopy(generated)
+    invalid['details']=[generated['summary'][0]]
+    with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(invalid,payload)
+    assert error.value.validation_rule=='response_schema'
+    # Medication schema retains its original details and complete source checks.
+    medication=response_format(fc.build_facts(MEDS))['json_schema']['schema']
+    assert set(medication['required'])=={'summary','details','quiz'}
+    assert medication['properties']['details']['minItems']==1
+
+
+@pytest.mark.parametrize('ids',[['0:result'],['invented-id']])
+def test_summary_with_unrelated_or_invalid_evidence_is_rejected(ids):
+    raw={'health_checkup_results':[
+        {'test_item_name':'혈색소','result_value':'15.1','result_unit':'g/dL','reference_range':'13~16.5'},
+        {'test_item_name':'신장 검사','result_value':'90','result_unit':'mL/min','reference_range':'60이상'}]}
+    payload=fc.build_facts(raw)
+    generated=plan(payload)
+    generated['summary'][0]={'text':'신장 검사는 문서의 측정값과 참고범위를 함께 살펴보는 항목입니다.','evidence':ids}
+    with pytest.raises(fc.ExplanationError) as error: fc.validate_plan(generated,payload)
+    assert error.value.validation_rule in ('document_test_term','document_evidence')
+
+
+@pytest.mark.parametrize('failure',['json','number','medical','comparison','contract'])
+def test_health_failure_preserves_basic_summary_who_and_table_without_retries(monkeypatch,caplog,failure):
+    from pathlib import Path
+    from streamlit.testing.v1 import AppTest
+    from carebridge.domain import normalize
+    from carebridge.records import record
+    from carebridge.health_report import LIFESTYLE
+    payload=fc.build_facts(HEALTH)
+    generated=natural_report(payload)
+    if failure=='json':
+        content='not json PRIVATE_RAW_RESPONSE'
+    else:
+        if failure=='number': generated['summary'][0]['text']='공복혈당 측정값은 999mg/dL입니다.'
+        if failure=='medical': generated['summary'][0]['text']='당신은 당뇨병이 확실합니다.'
+        if failure=='comparison': generated['summary'][0]['text']='공복혈당은 참고범위 안에 있습니다.'
+        if failure=='contract': generated['quiz'][0]={'question_id':'unverified-question'}
+        content=json.dumps(generated,ensure_ascii=False)
+    transport=Mock()
+    transport.post.return_value=response(payload,choices=[{'finish_reason':'stop','message':{'content':content}}])
+    monkeypatch.setattr(fc.requests,'Session',lambda:transport)
+    kind,clean=normalize(HEALTH)
+    app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=15).run()
+    app.session_state['records']=[record(kind,clean,'synthetic.pdf','test',kind)]
+    app.sidebar.radio[0].set_value('건강검진').run()
+    next(b for b in app.button if b.label=='쉬운 설명 보기').click().run()
+    next(c for c in app.checkbox if 'Gateway 전송에 동의' in c.label).check().run()
+    next(b for b in app.button if b.label=='동의한 정보로 설명 생성').click().run()
+    app.run()
+    assert not app.exception and not app.warning and not app.error
+    assert any(i.value=='AI 설명을 생성하지 못해 기본 요약을 표시합니다' for i in app.info)
+    body='\n'.join(m.value for m in app.markdown)
+    assert '### 문서 기준 요약' in body and '추출된 2개 항목' in body
+    assert '<table aria-label="건강검진 결과"' in body and '문서 기준 초과' in body
+    assert '### AI 건강검진 리포트' not in body
+    for guide in LIFESTYLE.values(): assert guide['text'] in body and guide['url'] in body
+    assert transport.post.call_count==1
+    assert not any(b.label=='동의한 정보로 설명 생성' for b in app.button)
+    expected={'json':'response_json','number':'document_number','medical':'document_medical_claim',
+              'comparison':'document_comparison','contract':'quiz_candidate'}[failure]
+    assert 'state=rejected rule='+expected in caplog.text
+    assert 'section=' in caplog.text
+    for private in ['PRIVATE_RAW_RESPONSE','가상성명','900101','test-only-secret','999mg/dL']:
+        assert private not in caplog.text
+    assert app.session_state['records'][0]['data']==clean
