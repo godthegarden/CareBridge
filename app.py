@@ -21,7 +21,8 @@ logger.setLevel(logging.INFO)
 
 st.set_page_config(page_title='CareBridge · 나를 이해하는 건강기록',page_icon='🌿',layout='wide')
 st.markdown('''<style>
-.block-container{max-width:1080px;padding-top:2rem;padding-bottom:3rem}
+/* Keep the first page label below Streamlit's fixed header on every viewport. */
+.block-container{max-width:1080px;padding-top:5rem;padding-bottom:3rem}
 h1,h2,h3{letter-spacing:-.035em}h1{font-weight:750!important;font-size:2rem!important}h3{font-size:1.25rem!important}
 [data-testid="stSidebar"]{background:#edf3f1;border-right:1px solid #dfe8e5}
 [data-testid="stMetric"]{background:white;border:1px solid #dfe8e5;border-radius:12px;padding:14px}
@@ -45,7 +46,7 @@ h1,h2,h3{letter-spacing:-.035em}h1{font-weight:750!important;font-size:2rem!impo
 .status-badge{display:inline-block;font-size:.76rem;font-weight:500;padding:2px 8px;border-radius:6px;background:#eaf4ef;color:#306354;white-space:normal}
 .status-badge.attention{background:#fff3dc;color:#805715}
 .status-badge.danger{background:#fcebea;color:#a1282d}.status-badge.muted{background:#edf0f2;color:#52616b}
-@media(max-width:640px){.block-container{padding:1rem}.hero{padding:24px}.hero h2{font-size:1.6rem}
+@media(max-width:640px){.block-container{padding-left:1rem;padding-right:1rem}.hero{padding:24px}.hero h2{font-size:1.6rem}
 .result-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.summary-item:nth-child(odd){border-left:0}.summary-item:nth-child(n+3){border-top:1px solid #e6eeeb}
 .summary-item{padding:12px 10px}.summary-item span{font-size:.7rem}.summary-item strong{font-size:1.12rem}
 .result-table table,.result-table tbody{display:block}.result-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
