@@ -4,7 +4,7 @@ from carebridge.client import AnalysisError, validate_pdf
 from carebridge.domain import normalize,parse_job,range_status,make_schedule,medication_issues
 from carebridge.records import record,export_records,import_records
 
-@pytest.mark.parametrize('value,ref,expected', [('22.4','18.5-24.9','문서 범위 내'),('26.1','18.5-24.9','문서 범위 초과'),('미기재','60-79','확인 필요'),('120/80','90-119','확인 필요'),('10','<10','문서 기준 초과'),('10','≤10','문서 범위 내'),('5','남 0-4 / 여 0-6','확인 필요'),('4','5-1','확인 필요')])
+@pytest.mark.parametrize('value,ref,expected', [('22.4','18.5-24.9','문서 범위 내'),('26.1','18.5-24.9','문서 범위 초과'),('미기재','60-79','확인 필요'),('120/80','90-119','추가 대조 필요'),('10','<10','문서 기준 초과'),('10','≤10','문서 범위 내'),('5','남 0-4 / 여 0-6','확인 필요'),('4','5-1','추가 대조 필요')])
 def test_ranges(value,ref,expected):
     assert range_status({'result_value':value,'reference_range':ref})==expected
 

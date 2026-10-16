@@ -91,6 +91,8 @@ def test_first_session_single_click_reaches_real_generated_card_and_reuses_respo
     assert any(m.value=='### AI 핵심 요약' for m in app.markdown)
     assert any('이번 자료에서는 BMI와 공복혈당' in m.value for m in app.markdown)
     assert not any(m.value=='### 기본 문서 요약' for m in app.markdown)
+    assert not any(e.label=='AI 설명 생성 · 외부 전송 동의' for e in app.expander)
+    assert not any(b.label=='동의한 정보로 설명 생성' for b in app.button)
     assert next(b for b in app.button if b.label=='AI 분석 및 해설 보기').disabled
     assert app.session_state['active_page']=='문서 분석'
     body=json.dumps(gateway.post.call_args.kwargs['json'],ensure_ascii=False)
@@ -108,6 +110,9 @@ def test_without_optional_consent_never_calls_factchat_and_shows_basic_not_ai(mo
     assert any(m.value=='### 기본 문서 요약' for m in app.markdown)
     assert not any(m.value=='### AI 핵심 요약' for m in app.markdown)
     assert any('문서 기준 초과' in m.value for m in app.markdown)
+    control=next(e for e in app.expander if e.label=='AI 설명 생성 · 외부 전송 동의')
+    assert not control.proto.expanded
+    assert next(b for b in control.button if b.label=='동의한 정보로 설명 생성').disabled
     app.run()
     assert not gateway.post.called and agent.analyze.call_count==1
 
@@ -118,6 +123,9 @@ def test_ai_failure_keeps_record_basic_summary_and_collapsed_sources(monkeypatch
     assert any(m.value=='### 기본 문서 요약' for m in app.markdown)
     assert not any(m.value=='### AI 핵심 요약' for m in app.markdown)
     assert app.session_state['analysis_flow']['explanation_state']=='error'
+    controls=[e for e in app.expander if e.label=='AI 설명 생성 · 외부 전송 동의']
+    assert len(controls)==1 and not controls[0].proto.expanded
+    assert not any(b.label=='동의한 정보로 설명 생성' for b in app.button)
     detail=next(e for e in app.expander if e.label=='상세 검사 결과 · 원문 대조')
     assert not detail.proto.expanded and detail.markdown
     app.run()

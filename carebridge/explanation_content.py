@@ -15,11 +15,19 @@ GLOSSARY = {
     'AST': ('간과 근육 등 여러 조직에 있는 효소를 혈액에서 측정하는 검사로, 다른 결과와 함께 읽습니다.', 'https://medlineplus.gov/lab-tests/ast-test/'),
     'ALT': ('주로 간에 있는 효소를 혈액에서 측정하는 검사로, 다른 결과와 함께 읽습니다.', 'https://medlineplus.gov/lab-tests/alt-blood-test/'),
     '콜레스테롤': ('혈액 속 지방과 비슷한 물질인 콜레스테롤의 양을 확인하는 검사입니다.', 'https://medlineplus.gov/lab-tests/cholesterol-levels/'),
+    '중성지방': ('몸이 에너지로 쓰거나 저장하는 지방의 한 종류로, 혈액에 얼마나 있는지 확인합니다.', 'https://medlineplus.gov/lab-tests/triglycerides-test/'),
+    'GGT': ('주로 간에 있는 효소를 혈액에서 측정한 값으로, 다른 검사 결과와 함께 읽습니다.', 'https://medlineplus.gov/lab-tests/gamma-glutamyl-transferase-ggt-test/'),
+    '혈압': ('심장이 뛸 때와 쉴 때 혈관에 가해지는 압력입니다. 수축기와 이완기 값을 구분해 읽습니다.', 'https://medlineplus.gov/lab-tests/measuring-blood-pressure/'),
+    '혈색소': ('적혈구에서 산소를 운반하는 단백질인 헤모글로빈이 혈액에 얼마나 있는지 확인합니다.', 'https://medlineplus.gov/lab-tests/hemoglobin-test/'),
+    '신체계측': ('키는 몸의 높이, 몸무게는 몸의 무게를 잰 값입니다. 두 값 자체가 질병 판정은 아닙니다.', 'https://www.cdc.gov/bmi/about/index.html'),
+    '허리둘레': ('허리 주위를 잰 길이입니다. 문서에 적힌 성별 기준과 기준의 의미를 함께 확인합니다.', 'https://www.nhlbi.nih.gov/health/overweight-and-obesity/symptoms'),
+    '시력': ('얼마나 선명하게 볼 수 있는지 확인한 값입니다. 왼쪽·오른쪽 눈과 교정 여부를 구분해 읽습니다.', 'https://medlineplus.gov/lab-tests/vision-screening/'),
+    '크레아티닌': ('근육 활동으로 생기는 노폐물을 혈액에서 측정해 콩팥의 여과 기능을 살펴보는 데 쓰는 검사입니다.', 'https://medlineplus.gov/lab-tests/creatinine-test/'),
 }
 
 
 def term_definition(name):
-    key = re.sub(r'\s+', '', name).upper()
+    key = re.sub(r'\s+', '', unicodedata.normalize('NFKC',name)).upper()
     if re.fullmatch(r'BMI|체질량지수(?:\(BMI\))?|BMI\(체질량지수\)', key):
         return GLOSSARY['BMI']
     if re.fullmatch(r'공복혈당(?:\(FBS\)|\(FPG\))?|FBS|FPG', key):
@@ -29,7 +37,14 @@ def term_definition(name):
     aliases={'HDL':'HDL','HDL-C':'HDL','HDL콜레스테롤':'HDL','고밀도콜레스테롤':'HDL','HDL-콜레스테롤':'HDL','고밀도지단백콜레스테롤':'HDL',
              'LDL':'LDL','LDL-C':'LDL','LDL콜레스테롤':'LDL','저밀도콜레스테롤':'LDL','LDL-콜레스테롤':'LDL','저밀도지단백콜레스테롤':'LDL',
              'EGFR':'EGFR','E-GFR':'EGFR','추정사구체여과율':'EGFR','사구체여과율(EGFR)':'EGFR','추정사구체여과율(EGFR)':'EGFR',
-             'AST':'AST','AST(GOT)':'AST','GOT':'AST','ALT':'ALT','ALT(GPT)':'ALT','GPT':'ALT'}
+             'AST':'AST','AST(GOT)':'AST','AST(SGOT)':'AST','GOT':'AST','ALT':'ALT','ALT(GPT)':'ALT','ALT(SGPT)':'ALT','GPT':'ALT',
+             '중성지방':'중성지방','중성지방(TG)':'중성지방','TG':'중성지방','TRIGLYCERIDE':'중성지방','TRIGLYCERIDES':'중성지방',
+             'Γ-GTP':'GGT','ΓGTP':'GGT','감마지티피':'GGT','감마-GTP':'GGT','GGT':'GGT','GGTP':'GGT',
+             '혈압':'혈압','수축기혈압':'혈압','이완기혈압':'혈압','혈압(수축기/이완기)':'혈압','수축기/이완기혈압':'혈압',
+             '혈색소':'혈색소','혈색소(HB)':'혈색소','혈색소(HGB)':'혈색소','헤모글로빈':'혈색소','HB':'혈색소','HGB':'혈색소','HEMOGLOBIN':'혈색소',
+             '신장':'신체계측','키':'신체계측','체중':'신체계측','몸무게':'신체계측','키/몸무게':'신체계측','신장/체중':'신체계측',
+             '허리둘레':'허리둘레','시력':'시력','시력(좌/우)':'시력','좌/우시력':'시력','좌안시력':'시력','우안시력':'시력',
+             '크레아티닌':'크레아티닌','혈청크레아티닌':'크레아티닌','CREATININE':'크레아티닌'}
     return GLOSSARY.get(aliases.get(key,''))
 
 

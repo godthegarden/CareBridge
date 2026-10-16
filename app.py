@@ -156,8 +156,7 @@ def analysis_view(r):
         summary_slot=st.container(border=True)
         checkup_context(clean)
         general_health_guide(clean)
-        with st.expander('AI 설명 생성 · 외부 전송 동의',expanded=False):
-            easy_entry=easy_explanation(view_record,compact=True,render=False)
+        easy_entry=easy_explanation(view_record,compact=True,render=False,collapse_controls=True)
         with summary_slot:
             if easy_entry:
                 health_report(easy_entry)

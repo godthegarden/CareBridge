@@ -133,6 +133,17 @@ def explicit_verdict(text):
     if re.search(r'확인\s*필요|판정\s*불가|불명|여부|판독\s*불가|\?|추정|가능성|의심',text):
         return ('unknown','확인 필요')
     text=re.sub(r'^(?:판정|결과|분류|상태)\s*[:：]\s*','',text)
+    # Only explicit checked marks count. Plain lists and empty/multiple selections
+    # are not source verdicts; never choose a label by its order on the form.
+    checked=r'☑|☒|■|✅|\[[xX✓✔]\]'
+    marks=rf'(?:{checked}|☐|□|\[\s*\])'
+    if re.search(marks,text):
+        options=list(re.finditer(rf'({marks})\s*({LABEL})(?![가-힣A-Za-z])',text))
+        remainder=re.sub(rf'{marks}\s*({LABEL})(?![가-힣A-Za-z])','',text)
+        selected=[m[2] for m in options if re.fullmatch(checked,m[1])]
+        if len(selected)==1 and not remainder.strip(' ,;/·\n'):
+            return label_level(selected[0]),selected[0]
+        return ('unknown','원문 판정 확인')
     match=re.fullmatch(rf'({LABEL})(?:\s*\([^)]*\)|[.,;·].*)?',text)
     if match:
         tail=text[match.end(1):]
@@ -217,11 +228,16 @@ def assess(row,sex=None):
                      (threshold_meaning(row)=='normal' or calculated.basis=='document_category'))):
                 return result('unknown','확인 필요 · 원문 판정과 수치 기준 불일치',
                               '원문 판정과 수치 비교가 다릅니다. 어느 쪽도 임의로 확정하지 않고 원본 대조가 필요합니다.',basis='conflict')
-        return result(level,'원문 판정 · '+label if level!='unknown' else '확인 필요','문서의 항목별 판정을 우선 표시했습니다. 원문 비고를 대조하세요.',basis='document_verdict')
+        return result(level,'원문 판정 · '+label if level!='unknown' else label,'문서의 항목별 판정을 우선 표시했습니다. 원문 비고를 대조하세요.',basis='document_verdict')
     unit=measurement_fields(row).unit
     value=cleaned(row.get('result_value'),unit)
+    absent=lambda text: bool(re.fullmatch(r'\s*(?:미기재|미상|불명|없음|[-—]|n/?a|null|none)?\s*',str(text or ''),re.I))
+    if absent(value) or re.search(r'확인\s*필요|불명확|판독|OCR|\?',value,re.I):
+        return result('unknown','확인 필요','측정값이 없거나 명확히 기재되지 않았습니다.',basis='missing_value')
+    if absent(row.get('reference_range')):
+        return result('unknown','참고기준 없음','추출된 참고기준이 없습니다. 측정값을 그대로 표시하며 정상·이상을 판단하지 않습니다.',basis='no_reference')
     if not re.fullmatch(NUMBER,value):
-        return result('unknown','확인 필요','측정값을 단일 숫자로 확인할 수 없습니다.')
+        return result('unknown','추가 대조 필요','여러 값이나 문자로 된 결과는 단일 숫자 기준으로 비교하지 않습니다. 구성값과 원문 판정을 함께 대조하세요.',basis='uncompared_value')
     value=Decimal(value)
     ref=reference_condition(cleaned(row.get('reference_range'),unit))
     parts=sex_parts(ref)
@@ -243,7 +259,7 @@ def assess(row,sex=None):
         label=matched[0]
         return result(label_level(label),label,'문서에 적힌 범주별 숫자 조건을 적용했습니다. 외부 기준은 사용하지 않았습니다.',basis='document_category')
     if not rule:
-        return result('unknown','확인 필요','문서 기준을 해석할 수 없거나 값과 기준의 단위가 일치하지 않습니다.')
+        return result('unknown','추가 대조 필요','참고기준의 형식 또는 단위를 자동 비교할 수 없습니다. 원문 기준과 값을 함께 대조하세요.',basis='unparsed_reference')
     if rule.low is None or rule.high is None:
         meaning=threshold_meaning(row)
         applies=rule.matches(value)

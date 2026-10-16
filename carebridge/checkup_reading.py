@@ -31,6 +31,6 @@ def result_context(row,sex=None):
     if suspected:
         return '원문 신규 의심 소견 · 확정 진단 아님' if '신규' in remark else '원문 의심 소견 · 신규 여부 확인 필요'
     assessment=assess(row,sex)
-    if assessment.level=='unknown': return '확인 필요'
+    if assessment.level=='unknown': return assessment.reason
     if assessment.basis=='comparison' and assessment.level=='abnormal': return '문서 참고기준과의 수치 차이 · 진단 아님'
     return '원문 판정·참고기준 설명 · 진단 아님'

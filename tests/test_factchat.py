@@ -1574,7 +1574,13 @@ def test_health_four_cards_hide_controls_tables_and_quiz_until_opened(monkeypatc
         assert not any('원본 문서명' in n.value for n in nodes if n.type=='caption')
         assert app.subheader[0].value=='AI 건강검진 해설'
         assert any(c.value==HEALTH_NOTICE for c in app.caption)
-        for label in ['AI 설명 생성 · 외부 전송 동의','상세 검사 결과 · 원문 대조']:
+        labels=['상세 검사 결과 · 원문 대조']
+        if generated:
+            assert not any(e.label=='AI 설명 생성 · 외부 전송 동의' for e in app.expander)
+            assert not any(b.label=='동의한 정보로 설명 생성' for b in app.button)
+        else:
+            labels.append('AI 설명 생성 · 외부 전송 동의')
+        for label in labels:
             assert not next(e for e in app.expander if e.label==label).proto.expanded
     assert_simple_page()
     assert transport.post.call_count==0

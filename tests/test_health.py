@@ -268,3 +268,64 @@ def test_explicit_verdict_and_clear_numeric_opposition_requires_review(value,ref
     assert result.level=='unknown' and result.basis=='conflict'
     assert result.text.startswith('확인 필요')
     assert item==original
+
+
+@pytest.mark.parametrize('name,value,reference,status,basis',[
+    ('키/몸무게','170cm / 70kg','','참고기준 없음','no_reference'),
+    ('키','170','미기재','참고기준 없음','no_reference'),
+    ('혈압','120/80','수축기 130미만 / 이완기 85미만','추가 대조 필요','uncompared_value'),
+    ('시력(좌/우)','좌 1.0 / 우 0.9','좌우 각각 0.8이상','추가 대조 필요','uncompared_value'),
+    ('검사','14','성인 기준','추가 대조 필요','unparsed_reference'),
+    ('검사','확인 필요','','확인 필요','document_verdict'),
+    ('검사','','','확인 필요','missing_value'),
+])
+def test_unevaluated_results_have_specific_non_diagnostic_status(name,value,reference,status,basis):
+    from carebridge.health import summarize
+    item={**row(value,reference),'test_item_name':name}
+    original=deepcopy(item)
+    result=assess(item)
+    assert (result.text,result.basis,result.level)==(status,basis,'unknown')
+    assert result.tone=='unknown' and summarize([result])['met']==0
+    assert item==original
+
+
+@pytest.mark.parametrize('remark,label,level',[
+    ('☑ 정상 ☐ 이상','정상','normal'),('판정: □ 정상 ■ 이상','이상','abnormal'),
+    ('[x] 정상 [ ] 주의','정상','normal'),('☐ 정상 ✅ 경계','경계','caution'),
+    ('☑ 정상 ☑ 이상','원문 판정 확인','unknown'),('□ 정상 □ 이상','원문 판정 확인','unknown'),
+    ('☑ 정상 ☐ 이상 추가 문구','원문 판정 확인','unknown'),
+])
+def test_checkbox_verdict_requires_one_unambiguous_selection(remark,label,level):
+    result=assess(row('120/80','',remark=remark))
+    assert result.level==level and result.basis=='document_verdict'
+    assert label in result.text
+
+
+def test_checkbox_verdict_keeps_conflict_and_uncertainty_guards():
+    assert assess(row('108','100미만',remark='☑ 정상 ☐ 이상')).basis=='conflict'
+    assert assess(row('108','100미만',remark='☑ 정상 ☐ 이상 (판독 불가)')).level=='unknown'
+    # A label list without a selection must never become a normal verdict.
+    assert assess(row('120/80','',remark='정상 / 이상')).level=='unknown'
+
+
+def test_completed_extract_compound_strings_are_preserved_through_normalization():
+    import json
+    from carebridge.domain import analysis_record_data
+    from carebridge.health import summarize
+    rows=[{**row('170cm / 70kg',''),'test_item_name':'키/몸무게'},
+          {**row('120/80','',remark='☑ 정상 ☐ 이상'),'test_item_name':'혈압'},
+          {**row('좌 1.0 / 우 0.9','좌우 각각 0.8이상'),'test_item_name':'시력'},
+          {**row('91','남 90 이상, 여 85 이상'),'test_item_name':'허리둘레',
+           'source_excerpt':'복부비만 기준: 남 90 이상, 여 85 이상'}]
+    data={'health_checkup_results':rows,'examinee_sex':'남성'}
+    job={'status':'completed','output':[
+        {'step_type':'document-parse','status':'completed','content':[{'type':'output_text','text':'가상 원문 키 170cm / 몸무게 70kg'}]},
+        {'step_type':'document-classify','status':'completed','content':[{'type':'output_text','text':'health_checkup_result'}]},
+        {'step_type':'information-extract','status':'completed','content':[{'type':'output_text','text':json.dumps(data,ensure_ascii=False)}]}]}
+    kind,clean,classification=analysis_record_data(job)
+    assert kind==classification=='health_checkup_result'
+    assert clean['health_checkup_results']==rows
+    results=[assess(r,document_sex(clean)) for r in rows]
+    assert [a.text for a in results]==['참고기준 없음','원문 판정 · 정상','추가 대조 필요','원문 위험 기준 해당']
+    assert summarize(results)=={'total':4,'met':1,'attention':1,'unknown':2}
+    assert assess(rows[-1]).text=='확인 필요'  # No sex inference from the reference.
