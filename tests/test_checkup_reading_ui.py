@@ -45,8 +45,8 @@ def test_compound_readings_source_verdict_and_unsupported_terms_reach_final_ui(m
         if node.type=='expander': return
         for child in getattr(node,'children',{}).values(): yield from visible(child)
     body='\n'.join(n.value for n in visible(app.main) if n.type in ('markdown','text','caption'))
-    for text in ('170cm / 70kg','참고기준 없음','120/80','원문 판정 · 정상','☑ 정상 ☐ 이상',
-                 '좌 1.0 / 우 0.9','추가 대조 필요','남성: 90 이상 / 여성: 85 이상','원문 위험 기준 해당',
+    for text in ('기본 측정값','170cm / 70kg','120/80','원문 판정 · 정상','☑ 정상 ☐ 이상',
+                 '좌 1.0 / 우 0.9','남성: 90 이상 / 여성: 85 이상','원문 위험 기준 해당',
                  '고정 용어 설명 미지원: 미지원 검사명','개인의 건강 상태를 판정하는 설명이 아닙니다.'):
         assert text in body
     assert '측정값을 단일 숫자로' not in body
@@ -54,3 +54,29 @@ def test_compound_readings_source_verdict_and_unsupported_terms_reach_final_ui(m
     assert app.session_state['records'][0]['data']==clean
     app.run()
     assert not app.exception and not network.called
+
+
+@pytest.mark.parametrize('name,value', [('키','170'),('몸무게','70'),('키/몸무게','170 / 70'),('시력(좌/우)','1.0 / 0.9')])
+def test_body_and_vision_without_criteria_are_measurements_not_attention(name,value):
+    from carebridge.checkup_reading import measurement_only
+    row={'test_item_name':name,'result_value':value,'reference_range':''}
+    assert measurement_only(row)
+    assert not measurement_only({**row,'remark':'이상'})
+    assert not measurement_only({**row,'result_value':''})
+    assert not measurement_only({**row,'result_value':'108','reference_range':'100미만'})
+
+
+def test_missing_extracted_waist_reference_does_not_claim_source_has_none():
+    from carebridge.health import assess
+    from carebridge.checkup_reading import measurement_only
+    row={'test_item_name':'허리둘레(cm)','result_value':'91','reference_range':'',
+         'source_excerpt':'허리둘레 복부비만(남 90 이상, 여 85 이상)'}
+    result=assess(row,'male')
+    assert result.reference=='추출값에서 확인되지 않음'
+    assert result.level=='unknown' and result.basis=='no_reference'
+    assert not measurement_only(row,'male')
+    # Do not inject common clinical thresholds to repair a missing Extract field.
+    assert row['reference_range']==''
+    extracted={**row,'reference_range':'복부비만 기준: 남 90 이상, 여 85 이상'}
+    assert assess(extracted,'male').text=='원문 위험 기준 해당'
+    assert assess(extracted).level=='unknown'

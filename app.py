@@ -13,7 +13,7 @@ from carebridge.health import assess, document_sex, summarize, measurement_field
 from carebridge.explanation_ui import easy_explanation, comprehension, general_health_guide, checkup_context, health_report, show_evidence, HEALTH_NOTICE
 from carebridge.medication_validation import field_errors, variable_schedule
 from carebridge.stage_review import stage_review
-from carebridge.checkup_reading import document_opinions
+from carebridge.checkup_reading import document_opinions, measurement_only
 from carebridge.analysis_flow import BUSY, set_upload, queue, run_queued
 
 logger=logging.getLogger('carebridge.app')
@@ -166,7 +166,7 @@ def analysis_view(r):
                 st.markdown('### 기본 문서 요약')
                 st.caption('기본 문서 요약 · AI 생성 설명 아님')
                 readings=[(row,assess(row,document_sex(clean))) for row in clean['health_checkup_results']]
-                attention=[(row,value) for row,value in readings if value.level!='normal'][:2]
+                attention=[(row,value) for row,value in readings if value.level!='normal' and not measurement_only(row,document_sex(clean))][:2]
                 sentences=[measurement_fields(row).name+'은(는) '+value.text+'로 표시되어 원문과 참고기준을 함께 확인할 항목입니다.' for row,value in attention]
                 if not sentences: sentences=['추출된 항목은 문서의 참고기준과 함께 읽을 수 있습니다.']
                 sentences.extend(['업로드된 자료에 있는 항목만 설명하며 전체 검진 결과로 확대하지 않습니다.','이 비교만으로 질병이나 개인별 치료 방법을 확정할 수 없습니다.'])

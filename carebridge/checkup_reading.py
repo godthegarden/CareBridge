@@ -6,6 +6,17 @@ OPINION_FIELDS=('overall_impression','overall_opinion','general_comment')
 OPINION_NAMES={'종합소견','종합의견','종합판정','검진소견'}
 
 
+def measurement_only(row,sex=None):
+    """Routine body/vision measurements need no invented normative threshold.
+
+    Keep explicit source findings, conflicts and applicable comparisons visible.
+    """
+    name=re.sub(r'\s+','',measurement_fields(row).name)
+    basic=bool(re.fullmatch(r'키|신장|몸무게|체중|키/몸무게|신장/체중|(?:좌안|우안)?시력(?:\((?:좌/우|우/좌|좌|우|교정|나안)\))?|좌/우시력',name))
+    assessment=assess(row,sex)
+    return basic and assessment.basis in ('no_reference','uncompared_value','unparsed_reference') and not row.get('remark','').strip()
+
+
 def document_opinions(data):
     values=[data.get(field) for field in OPINION_FIELDS]
     for row in data.get('health_checkup_results',[]):

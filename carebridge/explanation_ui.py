@@ -7,7 +7,7 @@ from .explanation_content import question, quiz_options, term_definition
 from .ui import lines, badge
 from .health_report import LIFESTYLE
 from .health import assess, document_sex, measurement_fields
-from .checkup_reading import related_guides, result_context
+from .checkup_reading import related_guides, result_context, measurement_only
 from .health_safety import AI_NOTICE, text_kind
 
 
@@ -182,7 +182,15 @@ def checkup_context(data):
     with st.container(border=True):
         st.markdown('### 검사 결과 의미 해설')
         sex=document_sex(data)
-        candidates=sorted(data['health_checkup_results'],key=lambda row:
+        recorded=[row for row in data['health_checkup_results'] if measurement_only(row,sex)]
+        if recorded:
+            st.markdown('**기본 측정값**')
+            for row in recorded:
+                measurement=measurement_fields(row)
+                value=row.get('result_value') or '미기재'
+                if measurement.unit and measurement.unit not in value: value+=' '+measurement.unit
+                st.markdown('<p>'+lines(measurement.name)+' · '+lines(value)+'</p>',unsafe_allow_html=True)
+        candidates=sorted([row for row in data['health_checkup_results'] if not measurement_only(row,sex)],key=lambda row:
                           0 if assess(row,sex).level in ('caution','abnormal') or assess(row,sex).basis=='conflict' else
                           1 if result_context(row,sex).startswith(('원문 기존','원문 의심','원문 신규','기록 구분')) else
                           2 if assess(row,sex).level=='unknown' else 3)
@@ -192,12 +200,13 @@ def checkup_context(data):
             value=row.get('result_value') or '미기재'
             if measurement.unit and measurement.unit not in value:
                 value+=' '+measurement.unit
-            facts='측정값: '+value+' · 참고기준: '+assessment.reference
+            reference='추출값에서 확인되지 않음 · 원문 대조 필요' if assessment.basis=='no_reference' else assessment.reference
+            facts='측정값: '+value+' · 참고기준: '+reference
             remark=('원문 판정·비고: '+row['remark']) if row.get('remark') else ''
             st.markdown('<p><strong>'+lines(measurement.name)+'</strong> · '+badge(assessment.text,tone=assessment.tone)+'<br>'+lines(facts)+
                         ('<br>'+lines(remark) if remark else '')+'<br>'+lines(result_context(row,sex))+'</p>',unsafe_allow_html=True)
         if len(candidates)>5: st.caption('주요 5개 항목입니다. 전체 항목은 상세 보기에서 확인하세요.')
-        if not candidates: st.caption('추출된 항목은 문서 기준으로 비교되었습니다. 기준 충족만으로 전체 건강 상태를 확정하지 않습니다.')
+        if not candidates and not recorded: st.caption('의미를 해설할 추출 항목이 없습니다.')
 
 
 def general_health_guide(data):

@@ -190,6 +190,8 @@ def categories(text):
 
 def format_reference(row):
     raw=row.get('reference_range') or ''
+    if re.fullmatch(r'\s*(?:미기재|미상|불명|없음|[-—]|n/?a|null|none)?\s*',str(raw),re.I):
+        return '추출값에서 확인되지 않음'
     unit=measurement_fields(row).unit
     text=cleaned(raw,unit)
     heading=REFERENCE_HEADING.match(text)
