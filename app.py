@@ -36,11 +36,12 @@ h1,h2,h3{letter-spacing:-.035em}h1{font-weight:750!important;font-size:2rem!impo
 .summary-item span{display:block;font-size:.8rem;color:#526d6a;margin-bottom:5px}.summary-item strong{font-size:1.4rem;font-weight:650;overflow-wrap:anywhere}
 .result-note{border-left:3px solid #39877c;background:#edf5f2;padding:12px 16px;border-radius:0 8px 8px 0;color:#284f4b;font-size:.9rem;line-height:1.65;margin:0 0 16px}
 .result-table{border:1px solid #dfe8e5;border-radius:12px;background:#fff;overflow:hidden;margin-bottom:8px}
-.result-table table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:.88rem;line-height:1.65}
+.result-table table{width:100%;margin:0;border-collapse:collapse;table-layout:fixed;font-size:.88rem;line-height:1.65}
 .result-table th{background:#eef4f2;color:#526d6a;font-size:.78rem;font-weight:600;text-align:left;padding:11px 14px;border:0}
 .result-table td{padding:13px 14px;vertical-align:top;border:0;border-top:1px solid #e8efec;white-space:normal;overflow-wrap:anywhere}
-.result-table table[aria-label="복약안내문 약품 목록"]{font-size:.82rem}.result-table table[aria-label="복약안내문 약품 목록"] td{padding:12px 10px}
-.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(1){width:24%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(2){width:10%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(3){width:10%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(4){width:10%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(5){width:20%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(6){width:26%}
+.result-table table[aria-label="복약안내문 약품 목록"]{font-size:.82rem}.result-table table[aria-label="복약안내문 약품 목록"] td{padding:10px}
+/* All seven columns share 100%; never collapse the caution column to zero width. */
+.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(1){width:22%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(2){width:10%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(3){width:8%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(4){width:8%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(5){width:14%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(6){width:16%}.result-table table[aria-label="복약안내문 약품 목록"] th:nth-child(7){width:22%}
 
 .result-table td:first-child{font-weight:600;color:#183b40}.result-table tbody tr:hover{background:#f9fbfa}
 .status-badge{display:inline-block;font-size:.76rem;font-weight:500;padding:2px 8px;border-radius:6px;background:#eaf4ef;color:#306354;white-space:normal}
